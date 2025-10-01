@@ -1,210 +1,314 @@
-<script>
-(function(){
-  const $ = (s)=>document.querySelector(s);
-  const list = $('#list'), stat=$('#stat'), score=$('#score');
-  const showAllBtn=$('#showAll'), checkBtn=$('#check'), resetBtn=$('#reset');
-  const genBtn=$('#gen'), exportDocBtn=$('#exportDoc'), exportPdfBtn=$('#exportPdf');
-  const toastEl=$('#toast'); const modeTag=$('#modeTag');
-  const btnGrammar=$('#btnGrammar'), btnTense=$('#btnTense');
-
-  let data=null, userAns={}, mode='grammar';
-
-  function toast(msg, ms=2200){ toastEl.textContent=msg; toastEl.style.display='block'; setTimeout(()=>toastEl.style.display='none',ms); }
-  function getTypes(){ const sel=Array.from($('#types').selectedOptions||[]).map(o=>o.value); return sel.length? sel : ['choice','error','transform','fill','rearrange','reading']; }
-
-  function setMode(m){
-    mode = m;
-    if(m==='grammar'){
-      btnGrammar.classList.add('btn-primary'); btnGrammar.classList.remove('btn-ghost');
-      btnTense.classList.add('btn-ghost'); btnTense.classList.remove('btn-primary');
-      modeTag.textContent='当前模式：语法综合';
-    }else{
-      btnTense.classList.add('btn-primary'); btnTense.classList.remove('btn-ghost');
-      btnGrammar.classList.add('btn-ghost'); btnGrammar.classList.remove('btn-primary');
-      modeTag.textContent='当前模式：时态专项';
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+  <title>英语练习 · Tutor v10.3</title>
+  <style>
+    :root{
+      --fg:#0f172a; --muted:#64748b; --bg:#f5f7fb; --card:#fff;
+      --border:#e5e7eb; --primary:#2563eb; --ok:#16a34a; --err:#dc2626;
     }
-  }
-  btnGrammar.addEventListener('click', ()=> setMode('grammar'));
-  btnTense.addEventListener('click', ()=> setMode('tense'));
-
-  function qEl(q, idx){
-    const wrap=document.createElement('div'); wrap.className='q';
-    const title=document.createElement('h3'); title.innerHTML=`${q.stem} <span class="badge">${q.type}</span>`; wrap.appendChild(title);
-    if(q.options?.length){
-      // 取消 A/B/C/D 标签，在导出和页面都以圆点展示
-      const ul=document.createElement('ul'); ul.style.margin='8px 0'; ul.style.paddingLeft='18px';
-      q.options.forEach(opt=>{ const li=document.createElement('li'); li.className='opt'; li.innerHTML=`<label><input type="radio" name="q${idx}" value="${opt.value}" /> ${opt.text}</label>`; li.addEventListener("change", (e)=>{ ul.querySelectorAll(".opt").forEach(x=>x.classList.remove("selected")); li.classList.add("selected");}); ul.appendChild(li); });
-      wrap.appendChild(ul);
-    }else{
-      const inp=document.createElement('input'); inp.placeholder='在这里作答'; inp.style.marginTop='6px'; inp.addEventListener('input', e=> userAns[idx]=(e.target.value||'').trim()); wrap.appendChild(inp);
+    *{box-sizing:border-box}
+    html,body{margin:0;padding:0}
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;color:var(--fg);background:var(--bg)}
+    header{padding:10px 12px;text-align:center}
+    header h1{margin:6px 0;font-size:clamp(20px,5vw,28px)}
+    header p{margin:0;color:var(--muted);font-size:13px}
+    .controls{
+      display:grid; gap:8px; grid-template-columns: repeat(2, minmax(0, 1fr));
+      background:var(--card); border:1px solid var(--border); border-radius:12px; padding:10px; margin:0 10px;
     }
-    const ans=document.createElement('div'); ans.className='ans'; ans.innerHTML=`
-      <div><strong>参考答案：</strong> ${Array.isArray(q.answer)? q.answer.join(' / ') : (q.answer ?? '—')}</div>
-      <div style="margin-top:6px"><strong>解析思路：</strong><br>${(q.explain||'—').replaceAll('\\n','<br>')}</div>
-      ${q.hint? `<div style="margin-top:6px" class="small muted"><strong>提示：</strong>${q.hint}</div>`:''}`;
-    wrap.appendChild(ans);
-    wrap.addEventListener('change', (e)=>{ if(e.target && e.target.name===`q${idx}`){ userAns[idx]=e.target.value; } });
-    title.style.cursor='pointer'; title.title='点击展开/收起解析'; title.addEventListener('click', ()=> ans.classList.toggle('show'));
-    return wrap;
-  }
-
-  function renderList(){
-    list.innerHTML='';
-    if(!data?.items?.length){ list.innerHTML='<div class="muted">没有题目，请重新生成。</div>'; return; }
-    data.items.forEach((q,idx)=> list.appendChild(qEl(q, idx)));
-    checkBtn.disabled=false; resetBtn.disabled=false; showAllBtn.disabled=false;
-    stat.textContent=`已生成 ${data.items.length} 题`;
-  }
-
-  function toggleAllExplain(){ const blocks=list.querySelectorAll('.ans'); const anyHidden=Array.from(blocks).some(b=>!b.classList.contains('show')); blocks.forEach(b=> b.classList.toggle('show', anyHidden)); }
-  function judgeOne(q, ua){ const norm=v=>(v??'').toString().trim().toLowerCase(); if(q.type==='choice'||q.type==='reading'){ return norm(ua) && norm(ua)===norm(q.answer);} if(Array.isArray(q.answer)) return q.answer.map(norm).includes(norm(ua)); if(typeof q.answer==='string') return norm(ua)===norm(q.answer); return false; }
-  function doCheck(){ if(!data?.items) return; let right=0,total=data.items.length; data.items.forEach((q,idx)=>{ const ua=userAns[idx]; const correct=judgeOne(q,ua); const block=list.children[idx]; const title=block.querySelector('h3'); const ans=block.querySelector('.ans'); ans.classList.add('show'); title.querySelector('.badge')?.remove(); const badge=document.createElement('span'); badge.className='badge '+(correct?'ok':'err'); badge.textContent=correct?'✓ 正确':'✗ 错误'; title.appendChild(badge);
-      // 给选择题的选中项上色
-      if(q.options?.length){ const ul=block.querySelector('ul'); if(ul){ const chosen = (userAns[idx]||'').toString().toUpperCase(); ul.querySelectorAll('.opt').forEach(li=>{ const v = (li.querySelector('input')?.value||'').toUpperCase(); li.classList.remove('good','bad'); if(v===chosen){ li.classList.add(correct? 'good':'bad'); } }); } }
-      if(correct) right++; }); score.textContent=`本次得分：${right} / ${total}（${Math.round(right/total*100)}分）`; }
-
-  function htmlForExport(includeAnswer=true){
-    const time=new Date().toLocaleString();
-    let html='<h2 style="margin:0 0 8px">译林版六年级英语 语法练习</h2>';
-    html += '<div style="font-size:12px;color:#666">导出时间：'+time+'</div>';
-    html += '<div style="font-size:12px;color:#666">模式：'+(mode==='tense'?'时态专项':'语法综合')+'</div>';
-    if(!data?.items?.length){
-      html += '<p>（尚未生成题目，此为占位导出。）</p>';
-      return html;
+    @media (min-width: 760px){ .controls{ grid-template-columns: repeat(6, minmax(0, 1fr)); } }
+    label.field{display:flex;flex-direction:column;gap:6px}
+    label.field span{font-size:12px;color:var(--muted)}
+    select, input[type="number"]{height:40px;border:1px solid var(--border);border-radius:10px;padding:0 10px;font-size:15px;background:#fff}
+    .btn{height:40px;padding:0 12px;border:1px solid var(--border);border-radius:10px;background:#fff;cursor:pointer}
+    .btn.primary{background:var(--primary);color:#fff;border-color:transparent}
+    .btn.ghost{background:transparent}
+    .btn.ok{color:#fff;background:var(--ok);border-color:transparent}
+    .btn.err{color:#fff;background:var(--err);border-color:transparent}
+    .toolbar{display:flex;gap:8px;flex-wrap:wrap;margin:8px 10px}
+    .card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:10px;margin:10px}
+    .q{border:1px solid var(--border); border-radius:12px; padding:10px; margin-bottom:10px; background:#fff}
+    .q .title{display:flex;align-items:center;justify-content:space-between;color:var(--muted);font-size:13px;margin-bottom:6px}
+    .q .stem{font-size:18px;margin:6px 0}
+    .q ul{margin:6px 0;padding-left:20px;font-size:18px}
+    .q li{margin:6px 0;padding:4px 6px;border-radius:8px;border:1px dashed transparent}
+    .q li .tag{font-size:12px;color:#475569}
+    .opt.selected{background:rgba(99,102,241,.12);border-color:#c7d2fe}
+    .opt.good{background:rgba(22,163,74,.12);border-color:#86efac}
+    .opt.bad{background:rgba(220,38,38,.12);border-color:#fecaca}
+    .ans{display:none;border-top:1px dashed var(--border);margin-top:8px;padding-top:8px}
+    .ans pre{white-space:pre-wrap;font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;font-size:16px;line-height:1.5;margin:0}
+    .ans .hint{font-size:13px;color:#475569}
+    .badge{font-size:12px;border-radius:999px;padding:2px 8px;background:#eef2ff;color:#3730a3}
+    .badge.ok{background:#dcfce7;color:#166534}
+    .badge.err{background:#fee2e2;color:#991b1b}
+    #toast{position:fixed;left:50%;bottom:12px;transform:translateX(-50%);background:#111827;color:#fff;padding:6px 10px;border-radius:10px;display:none;font-size:14px}
+    .bottom{position:sticky;bottom:0;background:rgba(245,247,251,.95);backdrop-filter:blur(6px);border-top:1px solid var(--border);padding:8px 10px;display:flex;justify-content:space-between;align-items:center}
+    /* Print */
+    @media print{
+      header,.controls,.toolbar,.bottom,#toast{display:none !important}
+      .q{page-break-inside: avoid; border-color:#ddd}
+      .q:nth-child(5n){page-break-after: always}
+      body.paper-noans .ans{display:none !important}
+      body.paper-ans .ans{display:block !important}
     }
-    // 不使用 <ol> 避免 1,2,3… 序号；使用分隔线和项目块
-    data.items.forEach((q, idx)=>{
-      html += '<div style="margin:12px 0; padding:10px; border:1px solid #ddd; border-radius:10px">';
-      html += '<div><strong>'+q.stem+'</strong></div>';
-      if(q.options?.length){
-        html += '<ul style="margin:6px 0 0 18px; padding:0">';
-        q.options.forEach(o=>{ html += '<li style="margin:3px 0">'+o.text+'</li>'; });
-        html += '</ul>';
-      }
-      if(includeAnswer){
-        html += '<div style="margin-top:6px"><em>答案：</em> '+(Array.isArray(q.answer)? q.answer.join(' / ') : q.answer)+'</div>';
-        html += '<div style="margin-top:4px"><em>解析：</em> '+(q.explain||'').replaceAll('\\n','<br>')+'</div>';
-      } else {
-        html += '<div style="margin-top:8px;height:22px;border-bottom:1px solid #ccc;width:60%"></div>';
-      }
-      html += '</div>';
-    });
-    return html;
-  }
-
-  function exportWord(){
-    const withAns = confirm('导出 Word 时是否包含答案与解析？\n“确定”包含；“取消”只导出题目。');
-    const html = `
-      <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">
-      <head><meta charset="utf-8"><title>英语练习</title>
-<style>
-/* --- Print rules for PDF export (v10.2) --- */
-@media print {
-  body { background:#fff !important; }
-  header, .controls, #toast, #modeTag, #check, #reset, #showAll, #exportDoc, #exportPdf { display:none !important; }
-  /* each question card */
-  .q { page-break-inside: avoid; border-color:#ddd !important; }
-  /* 5 questions per page */
-  .q:nth-child(5n) { page-break-after: always; }
-  /* answers visibility controlled by body class */
-  body.paper-noans .ans { display:none !important; }
-  body.paper-ans .ans { display:block !important; }
-}
-</style>
-
+  </style>
 </head>
-      <body>${htmlForExport(withAns)}</body></html>`;
-    const blob = new Blob([html], { type: 'application/msword' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = '译林六年级英语练习.doc';
-    document.body.appendChild(a);
-    a.click();
-    setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); },0);
-    toast('已触发 Word 下载');
-  }
+<body>
+  <header>
+    <h1>英语练习 · Tutor</h1>
+    <p>@凉风有信开发 · 提建议微信 wuliaotop</p>
+  </header>
 
-  async 
-function exportPdf(){
-  try{
-    const withAns = confirm('导出 PDF 时是否包含答案与解析？
-“确定”包含；“取消”只导出题目。');
-    // Set filename via document.title so most browsers use it as default
-    const oldTitle = document.title;
-    const d = new Date(); const pad = n=>String(n).padStart(2,'0');
-    const date = `${d.getFullYear()}${pad(d.getMonth()+1)}${pad(d.getDate())}`;
-    const name = withAns ? `${date}-解析` : `${date}-试卷`;
-    document.title = name;
-    document.body.classList.remove('paper-noans','paper-ans');
-    document.body.classList.add(withAns? 'paper-ans':'paper-noans');
-    window.print();
-    setTimeout(()=>{ document.body.classList.remove('paper-noans','paper-ans'); document.title = oldTitle; }, 200);
-  }catch(e){
-    alert('导出失败：' + (e && e.message ? e.message : e));
-  }
-}
-const { jsPDF } = window.jspdf;
-      const doc = new jsPDF({ unit:'pt', format:'a4' });
-      const pageWidth = doc.internal.pageSize.getWidth();
-      const margin = 40;
-      const maxWidth = pageWidth - margin*2;
+  <section class="controls">
+    <label class="field">
+      <span>模式</span>
+      <select id="mode">
+        <option value="grammar" selected>语法</option>
+        <option value="tense">时态</option>
+      </select>
+    </label>
+    <label class="field">
+      <span>题型（多选）</span>
+      <select id="types" multiple>
+        <option value="choice" selected>选择题</option>
+        <option value="error" selected>改错题</option>
+        <option value="transform" selected>句型转换</option>
+        <option value="rearrange">连词成句</option>
+        <option value="fill">填空</option>
+      </select>
+    </label>
+    <label class="field">
+      <span>题量</span>
+      <select id="count">
+        <option value="10" selected>10 题</option>
+        <option value="15">15 题</option>
+        <option value="20">20 题</option>
+      </select>
+    </label>
+    <label class="field">
+      <span>知识点（可选）</span>
+      <select id="topic">
+        <option value="">不限</option>
+        <option value="subject-verb agreement">主谓一致</option>
+        <option value="articles">冠词</option>
+        <option value="prepositions">介词</option>
+        <option value="pronouns">代词</option>
+        <option value="comparatives">比较级入门</option>
+        <option value="present simple">一般现在时</option>
+        <option value="past simple">一般过去时</option>
+        <option value="present continuous">现在进行时</option>
+        <option value="future simple">一般将来时</option>
+      </select>
+    </label>
+  </section>
 
-      const temp = document.createElement('div');
-      temp.style.visibility='hidden';
-      temp.style.position='fixed';
-      temp.style.left='-9999px';
-      temp.innerHTML = htmlForExport(withAns);
-      document.body.appendChild(temp);
-      const text = temp.innerText; // 已无数字序号
-      document.body.removeChild(temp);
+  <div class="toolbar">
+    <button id="gen" class="btn primary">📝 一键出题</button>
+    <button id="showAll" class="btn">👀 显示/隐藏全部解析</button>
+    <button id="check" class="btn ok">✅ 批改</button>
+    <button id="reset" class="btn">🔄 重置</button>
+    <button id="exportPdf" class="btn">🖨️ 导出 PDF</button>
+  </div>
 
-      const lines = doc.splitTextToSize(text, maxWidth);
-      let y = 50;
-      const lineHeight = 16;
-      lines.forEach(line => {
-        if(y > 780){ doc.addPage(); y = 50; }
-        doc.text(line, margin, y);
-        y += lineHeight;
-      });
-      doc.save('译林六年级英语练习.pdf');
-      toast('已触发 PDF 下载');
-    }catch(e){
-      toast('PDF 导出失败：'+e.message);
-      console.error(e);
+  <main id="list" class="card">
+    <p class="muted" id="placeholder">选择条件后，点击“📝 一键出题”。</p>
+  </main>
+
+  <div class="bottom">
+    <div id="score" class="muted">本次得分：-</div>
+    <div id="stat" class="muted"></div>
+  </div>
+
+  <div id="toast"></div>
+
+  <script>
+  (function(){
+    const $ = (s)=>document.querySelector(s);
+    const list = $('#list'), stat=$('#stat'), score=$('#score');
+    const showAllBtn=$('#showAll'), checkBtn=$('#check'), resetBtn=$('#reset');
+    const genBtn=$('#gen'), exportPdfBtn=$('#exportPdf');
+    const toastEl=$('#toast');
+
+    let data=null, userAns={};
+
+    function toast(msg, ms=2000){ toastEl.textContent=msg; toastEl.style.display='block'; setTimeout(()=>toastEl.style.display='none', ms); }
+    function getTypes(){
+      const sel = Array.from($('#types').selectedOptions).map(o=>o.value);
+      return sel.length? sel : ['choice'];
     }
-  }
 
-  async function gen(){
-    const count = Math.max(1, Math.min(20, +($('#count').value||10)));
-    const types = getTypes(); const level=$('#level').value; const focus=($('#focus').value||'').trim();
-    genBtn.disabled=true; genBtn.textContent='⏳ 正在出题…'; list.innerHTML='<div class="muted">正在生成题目，请稍候…</div>'; stat.textContent=''; userAns={}; score.textContent='';
-    try{
-      const paths=['/api/tutor','/.netlify/functions/tutor']; let ok=false,lastErr=null,res,txt;
-      for(const p of paths){
-        try{
-          res=await fetch(p,{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ count, types, level, focus, mode }) });
-          if(res.ok){ ok = true; break; }
-          txt = await res.text().catch(()=> ''); lastErr = new Error(`HTTP ${res.status} ${res.statusText}: ${txt}`);
-        }catch(e){ lastErr=e; }
+    function render(items){
+      userAns = {};
+      list.innerHTML = '';
+      items.forEach((q, idx)=>{
+        const block = document.createElement('div');
+        block.className = 'q';
+        const title = document.createElement('div');
+        title.className='title';
+        title.innerHTML = \`第 \${idx+1} 题 <span class="badge">未作答</span>\`;
+        const stem = document.createElement('div');
+        stem.className='stem';
+        stem.textContent = q.stem || '';
+        block.appendChild(title);
+        block.appendChild(stem);
+
+        if (Array.isArray(q.options) && q.options.length){
+          const ul = document.createElement('ul');
+          q.options.forEach(opt=>{
+            const li = document.createElement('li');
+            li.className='opt';
+            li.innerHTML = \`<label><input type="radio" name="q\${idx}" value="\${opt.value}" /> \${opt.text}</label>\`;
+            li.addEventListener('click', (e)=>{
+              ul.querySelectorAll('.opt').forEach(x=>x.classList.remove('selected'));
+              li.classList.add('selected');
+              userAns[idx] = opt.value;
+            });
+            ul.appendChild(li);
+          });
+          block.appendChild(ul);
+        }else{
+          const input = document.createElement('input');
+          input.type='text'; input.placeholder='';
+          Object.assign(input.style, {width:'100%',height:'40px',fontSize:'18px',padding:'6px 10px',border:'1px solid #e5e7eb',borderRadius:'10px'});
+          input.addEventListener('change', ()=>{ userAns[idx] = input.value; });
+          block.appendChild(input);
+        }
+
+        const ans = document.createElement('div');
+        ans.className='ans';
+        const ref = Array.isArray(q.answer)? q.answer.join(' / ') : q.answer;
+        ans.innerHTML = \`<pre>参考答案：\${ref||''}
+分步讲解：
+\${(q.explain||'').trim()}
+提示：<span class="hint">\${(q.hint||'').trim()}</span></pre>\`;
+
+        const toggle = document.createElement('button');
+        toggle.className='btn'; toggle.textContent='显示解析';
+        toggle.addEventListener('click',()=>{
+          const show = ans.style.display==='block';
+          ans.style.display = show? 'none':'block';
+          toggle.textContent = show? '显示解析':'隐藏解析';
+        });
+
+        const ctrls = document.createElement('div');
+        ctrls.className='toolbar';
+        ctrls.appendChild(toggle);
+
+        block.appendChild(ctrls);
+        block.appendChild(ans);
+        list.appendChild(block);
+      });
+      $('#placeholder')?.remove();
+      stat.textContent = \`已生成 \${items.length} 题\`;
+      score.textContent = '本次得分：-';
+    }
+
+    function normText(s){
+      return String(s||'').toLowerCase().normalize('NFKC').replace(/[^a-z0-9\s']/g,' ').replace(/\b(a|an|the)\b/g,' ').replace(/\s+/g,' ').trim();
+    }
+    function lenientMatch(student, correct){
+      const s=normText(student), t=normText(correct);
+      if(!s||!t) return false;
+      if(t.length<=12){ return s===t || s.includes(t) || t.includes(s); }
+      const S=new Set(s.split(' ')), T=new Set(t.split(' '));
+      const inter=[...S].filter(x=>T.has(x)).length;
+      return inter/ new Set([...S,...T]).size >= 0.7 || inter >= Math.ceil(T.size*0.7);
+    }
+
+    async function generate(){
+      try{
+        list.innerHTML = '<p class="muted">正在出题...</p>';
+        const res = await fetch('/.netlify/functions/tutor',{
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({
+            mode: $('#mode').value,
+            types: getTypes(),
+            count: parseInt($('#count').value,10)||10,
+            topic: $('#topic').value||''
+          })
+        });
+        if(!res.ok){
+          const t = await res.text();
+          throw new Error(t);
+        }
+        const json = await res.json();
+        if(!json || !Array.isArray(json.items)) throw new Error('invalid data');
+        data = json.items;
+        render(data);
+      }catch(e){
+        list.innerHTML = '<p style="color:#b91c1c">生成失败：'+(e.message||e)+'</p>';
       }
-      if(!ok) throw lastErr || new Error('无法访问后端函数');
-      data = await res.json();
-      if(!data?.items || !Array.isArray(data.items)){ throw new Error('返回数据不是 items 数组，请检查后端提示。'); }
-      renderList(); toast('已生成题目');
-    }catch(err){ console.error(err); list.innerHTML = `<div style="color:#ffb4c0">出题失败：${err.message}</div>`; toast('出题失败：'+err.message); }
-    finally{ genBtn.disabled=false; genBtn.textContent='📝 一键出题'; }
-  }
+    }
 
-  $('#gen').addEventListener('click', gen);
-  $('#showAll').addEventListener('click', ()=>{ const blocks=list.querySelectorAll('.ans'); const anyHidden=Array.from(blocks).some(b=>!b.classList.contains('show')); blocks.forEach(b=> b.classList.toggle('show', anyHidden)); });
-  $('#check').addEventListener('click', ()=>{ if(!data?.items) return; let right=0,total=data.items.length; data.items.forEach((q,idx)=>{ const ua=userAns[idx]; const correct=(function(q,ua){ const n=v=>(v??'').toString().trim().toLowerCase(); if(q.type==='choice'||q.type==='reading'){ return n(ua) && n(ua)===n(q.answer);} if(Array.isArray(q.answer)) return q.answer.map(n).includes(n(ua)); if(typeof q.answer==='string') return n(ua)===n(q.answer); return false; })(q,ua); const block=list.children[idx]; const title=block.querySelector('h3'); const ans=block.querySelector('.ans'); ans.classList.add('show'); title.querySelector('.badge')?.remove(); const badge=document.createElement('span'); badge.className='badge '+(correct?'ok':'err'); badge.textContent=correct?'✓ 正确':'✗ 错误'; title.appendChild(badge);
-      // 给选择题的选中项上色
-      if(q.options?.length){ const ul=block.querySelector('ul'); if(ul){ const chosen = (userAns[idx]||'').toString().toUpperCase(); ul.querySelectorAll('.opt').forEach(li=>{ const v = (li.querySelector('input')?.value||'').toUpperCase(); li.classList.remove('good','bad'); if(v===chosen){ li.classList.add(correct? 'good':'bad'); } }); } }
-      if(correct) right++; }); score.textContent=`本次得分：${right} / ${total}（${Math.round(right/total*100)}分）`; });
-  $('#reset').addEventListener('click', ()=>{ userAns={}; score.textContent=''; if(data) renderList(); });
-  $('#exportDoc').addEventListener('click', exportWord);
-  $('#exportPdf').addEventListener('click', exportPdf);
-  // default mode
-  setMode('grammar');
-})();
-</script>
+    function doCheck(){
+      if(!data || !data.length){ toast('请先出题'); return; }
+      let right=0, total=data.length;
+      data.forEach((q, idx)=>{
+        const block = list.children[idx];
+        const badge = block.querySelector('.badge');
+        let correct=false;
+        if (Array.isArray(q.options) && q.options.length){
+          const chosen = (userAns[idx]||'').toString().toUpperCase();
+          correct = chosen && (chosen === String(q.answer||'').toUpperCase());
+          const ul = block.querySelector('ul');
+          if(ul){
+            ul.querySelectorAll('.opt').forEach(li=>{
+              const v = (li.querySelector('input')?.value||'').toUpperCase();
+              li.classList.remove('good','bad');
+              if(v===chosen) li.classList.add(correct? 'good':'bad');
+            });
+          }
+        }else{
+          const stu = userAns[idx] || '';
+          const refs = Array.isArray(q.answer)? q.answer : [q.answer];
+          correct = refs.some(r => lenientMatch(stu, r||''));
+        }
+        if(correct) right++;
+        badge.classList.remove('ok','err'); badge.classList.add(correct?'ok':'err');
+        badge.textContent = correct? '✓ 正确':'✗ 错误';
+        // 展开解析
+        const ans = block.querySelector('.ans'); if(ans){ ans.style.display='block'; }
+      });
+      score.textContent = \`本次得分：\${right} / \${total}（\${Math.round(right/total*100)}分）\`;
+      toast('批改完成');
+    }
+
+    function toggleAll(){
+      const anyHidden = Array.from(list.querySelectorAll('.ans')).some(a=>a.style.display!=='block');
+      list.querySelectorAll('.ans').forEach(a=> a.style.display = anyHidden? 'block':'none');
+    }
+    function resetPaper(){
+      userAns = {};
+      list.querySelectorAll('.opt').forEach(li=> li.classList.remove('selected','good','bad'));
+      list.querySelectorAll('input[type="text"]').forEach(i=> i.value='');
+      list.querySelectorAll('.badge').forEach(b=>{ b.classList.remove('ok','err'); b.textContent='未作答'; });
+      list.querySelectorAll('.ans').forEach(a=> a.style.display='none');
+      score.textContent='本次得分：-';
+      toast('已重置');
+    }
+
+    function exportPdf(){
+      const withAns = confirm('导出 PDF 时是否包含答案与解析？\n“确定”包含；“取消”只导出题目。');
+      const oldTitle = document.title;
+      const d = new Date(); const pad=n=>String(n).padStart(2,'0');
+      const date = \`\${d.getFullYear()}\${pad(d.getMonth()+1)}\${pad(d.getDate())}\`;
+      document.title = withAns? \`\${date}-解析\` : \`\${date}-试卷\`;
+      document.body.classList.remove('paper-noans','paper-ans');
+      document.body.classList.add(withAns? 'paper-ans':'paper-noans');
+      window.print();
+      setTimeout(()=>{ document.body.classList.remove('paper-noans','paper-ans'); document.title = oldTitle; }, 200);
+    }
+
+    genBtn.addEventListener('click', generate);
+    showAllBtn.addEventListener('click', toggleAll);
+    checkBtn.addEventListener('click', doCheck);
+    resetBtn.addEventListener('click', resetPaper);
+    exportPdfBtn.addEventListener('click', exportPdf);
+  })();
+  </script>
+</body>
+</html>
