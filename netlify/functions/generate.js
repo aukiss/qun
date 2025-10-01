@@ -1,68 +1,50 @@
 
 // netlify/functions/generate.js
-// Fresh rewrite for V9 UI (keep UI untouched, PDF untouched)
-// - Endpoint: /.netlify/functions/generate (same as旧版)
-// - Uses the same prompt spec as tutor.js, but outputs V9 schema [6 fields]
-// - Robust: batching, timeout, JSON-in-code-block rescue, explanation fallback
+// Clean rewrite for V9 UI: returns exactly 6 fields per item.
+// Uses the same prompt spec as tutor.js (user-provided).
+// Robust batching, timeout, codeblock-JSON rescue, explanation fallback.
 
 const TIMEOUT_MS = parseInt(process.env.TIMEOUT_MS || '22000', 10);
-const BATCH = parseInt(process.env.BATCH || '5', 10);
-const PARALLEL = parseInt(process.env.PARALLEL || '2', 10);
+const BATCH_SIZE = parseInt(process.env.BATCH_SIZE || '5', 10);
+const PARALLEL   = parseInt(process.env.PARALLEL   || '2', 10);
 
-const ALPHA = ['A','B','C','D'];
+const ABCD = ['A','B','C','D'];
 
-function cleanOption(s){ return String(s||'').replace(/^\s*[A-D]\s*[\)\.\u3001、]\s*/i,'').trim(); }
-function ensureABCD(arr){
-  const xs = (arr||[]).slice(0,4).map((t,i)=>`${ALPHA[i]}) ${cleanOption(t?.text ?? t)}`);
-  while (xs.length<4) xs.push(`${ALPHA[xs.length]}) `);
-  return xs;
+function clean(s){ return String(s||'').trim(); }
+function stripLabel(x){ return clean(x).replace(/^\s*[A-D]\s*[\)\.\u3001、]\s*/i,''); }
+function ensureABCD(options){
+  const arr = (Array.isArray(options)? options: []).slice(0,4);
+  const out = [];
+  for (let i=0;i<4;i++){
+    const t = arr[i];
+    const txt = (t && (t.text ?? t)) ? String(t.text ?? t) : '';
+    out.push(`${ABCD[i]}) ${stripLabel(txt)}`);
+  }
+  return out;
 }
-function letter(v){ const x = String(v||'A').toUpperCase(); return ALPHA.includes(x) ? x : 'A'; }
+function toLetter(a){ const x = String(a||'A').toUpperCase(); return ABCD.includes(x)?x:'A'; }
 
-function toV9(item){
-  const type = String(item.type||'choice').toLowerCase();
-  const qt = (type === 'choice') ? 'mcq' : 'short';
-  const options = (qt==='mcq') ? ensureABCD(item.options) : [];
-  const ansLetter = (qt==='mcq') ? letter(item.answer) : '';
-  let ansText = '';
-  if (qt==='mcq'){
-    const idx = {A:0,B:1,C:2,D:3}[ansLetter] ?? 0;
-    ansText = cleanOption((item.options?.[idx]?.text) || (options[idx]||'').replace(/^[A-D]\)\s*/,''));
-  }else{
-    ansText = Array.isArray(item.answer) ? item.answer.join(' / ') : String(item.answer||'').trim();
+function normalizeSteps(explain, stem){
+  const raw = clean(explain);
+  if (!raw){
+    // heuristic
+    const l = stem.toLowerCase();
+    const steps = [];
+    if (/yesterday|last\s+(night|week|month|year)|ago|in\s+20\d{2}/i.test(stem)) steps.push('1) 先看时间词：过去时信号 → 一般过去时。');
+    else if (/now|right now|at the moment|look!|listen!/i.test(stem)) steps.push('1) 先看时间词：正在发生 → 现在进行时。');
+    else steps.push('1) 先看时间词：频率/习惯词 → 一般现在时。');
+    steps.push('2) 判断主语人称数（he/she/it 为第三人称单数）。');
+    steps.push('3) 选择正确形式或按要求改写。');
+    steps.push('举例：把答案放回句子读一读是否通顺。');
+    return '分步讲解：\n' + steps.join('\n');
   }
-  // Build explanation: ensure has steps + hint (no exclamations)
-  const steps = (String(item.explain||'').trim() || '').replace(/\r/g,'').split(/\n+/).filter(Boolean);
-  let explain = '';
-  if (!steps.length){
-    // heuristic fallback
-    const stem = String(item.stem||'').toLowerCase();
-    let lines = ["1) 先看时间状语；", "2) 判断主语（是否三单）；", "3) 根据时态与主谓一致选择或改写；", "举例：将答案放入句中检查通顺。"];
-    if (/yesterday|last|ago|in \d{4}/i.test(stem)) lines[0] = "1) 出现过去时间词 → 一般过去时；";
-    if (/every|always|often|usually|sometimes|on (monday|tuesday|wednesday|thursday|friday|saturday|sunday)s?/i.test(stem)) lines[0] = "1) 习惯/频率词 → 一般现在时；";
-    if (/now|right now|at the moment|look!|listen!/i.test(stem)) lines[0] = "1) 正在发生 → 现在进行时；";
-    explain = `分步讲解：\n${lines.join('\n')}`;
-  }else{
-    // normalize numbering
-    const norm = steps.map(s=> s.replace(/^\d+\s*[\)\.、）]\s*/,'').replace(/^[①②③④⑤⑥⑦⑧⑨]\s*/,'').trim());
-    explain = `分步讲解：\n${norm.map((s,i)=>`${i+1}) ${s}`).join('\n')}`;
-  }
-  let hint = String(item.hint||'先看时间词，再判断时态与主谓一致。').replace(/[!！]+/g,'。').replace(/。。+/g,'。');
-  const ref = (qt==='mcq') ? `参考答案：${ansLetter}` : `参考答案：${ansText}`;
-  const answer_explanation = `${ref}\n${explain}\n提示：${hint}`.slice(0, 2200);
-
-  return {
-    question_type: qt,
-    question: String(item.stem||'').trim().slice(0,600),
-    options,
-    answer_letter: ansLetter,
-    answer_text: ansText,
-    answer_explanation
-  };
+  // normalize numbering
+  const lines = raw.replace(/\r/g,'').split(/\n+/).map(s=>s.trim()).filter(Boolean);
+  const norm = lines.map((s,i)=> s.replace(/^\d+\s*[\)\.、）]\s*/,'').replace(/^[①②③④⑤⑥⑦⑧⑨]\s*/,'')).map((s,i)=>`${i+1}) ${s}`);
+  return '分步讲解：\n' + norm.join('\n');
 }
 
-function buildSystemPrompt({count, types, level, focus, mode}){
-  // Copied to match tutor.js spec so题质一致
+function tutorSystemPrompt({count, types, level, focus, mode}){
   return `你是一名小学英语教研员，熟悉“译林版”六年级下/上册语法要求。请根据参数生成题库，并严格输出 JSON（不要多余文字）。
 【目标】生成适合六年级学生的题目，覆盖：时态（一般现在/过去/进行）、主谓一致、代词（物主/反身）、形容词/副词比较级与最高级、句型转换、连词成句、短文语法选择。讲解要口语化、分步骤、举例子，解释为什么错。
 【难度】
@@ -77,9 +59,9 @@ function buildSystemPrompt({count, types, level, focus, mode}){
       "id": "q1",
       "type": "choice|error|transform|fill|rearrange|reading",
       "stem": "题干（中文或英文+必要上下文）",
-      "options": [ { "value": "A", "text": "选项文本" }, ... ], // 非选择题可省略
+      "options": [ { "value": "A", "text": "选项文本" }, ... ],
       "answer": "A" | "答案文本" | ["可接受多个"],
-      "explain": "分步讲解：\n1) 先看时间状语…\n2) 主语是三单…\n3) 规则/不规则变化…\n举例：This/That…",
+      "explain": "分步讲解：\\n1) 先看时间状语…\\n2) 主语是三单…\\n3) 规则/不规则变化…\\n举例：This/That…",
       "hint": "给学生的小提示，可空"
     }
   ]
@@ -97,26 +79,24 @@ function buildSystemPrompt({count, types, level, focus, mode}){
 - 题干简洁，贴六年级生活语境（上学、课余、家庭、校园活动）。
 - 解析要让“做错的孩子也能看懂”，避免术语堆砌，强调“如何快速判断”。`;
 }
-function buildUserPrompt({count, types, level, focus, mode}){
-  return `请生成 ${count} 道题。题型：${types.join(', ')}；难度：${level}；知识点优先：${focus || '无特别指定'}；模式：${mode}。\n严格只返回 JSON。`;
+function tutorUserPrompt({count, types, level, focus, mode}){
+  return `请生成 ${count} 道题。题型：${types.join(', ')}；难度：${level}；知识点优先：${focus || '无特别指定'}；模式：${mode}。\\n严格只返回 JSON。`;
 }
 
 async function callLLM(batchCount, params, signal){
   const { OPENAI_API_KEY, OPENAI_BASE_URL, OPENAI_MODEL } = process.env;
   const url = `${OPENAI_BASE_URL.replace(/\/+$/,'')}/chat/completions`;
-  const system = buildSystemPrompt({ ...params, count: batchCount });
-  const user   = buildUserPrompt({ ...params, count: batchCount });
   const body = {
     model: OPENAI_MODEL || 'gpt-4o-mini',
     temperature: 0.55,
     messages: [
-      { role: 'system', content: system },
-      { role: 'user', content: user }
+      { role: 'system', content: tutorSystemPrompt({ ...params, count: batchCount }) },
+      { role: 'user',   content: tutorUserPrompt  ({ ...params, count: batchCount }) }
     ]
   };
   const resp = await fetch(url, {
     method: 'POST',
-    headers: { 'Authorization': `Bearer ${OPENAI_API_KEY}`, 'Content-Type':'application/json' },
+    headers: { 'Authorization': `Bearer ${OPENAI_API_KEY}`, 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
     signal
   });
@@ -126,27 +106,61 @@ async function callLLM(batchCount, params, signal){
   }
   const data = await resp.json();
   const content = data?.choices?.[0]?.message?.content?.trim() || '';
-  let json;
-  try{ json = JSON.parse(content); }
+  let j;
+  try{ j = JSON.parse(content); }
   catch(e){
     const m = content.match(/```json\s*([\s\S]*?)```/i);
-    if (m){ json = JSON.parse(m[1]); }
+    if (m){ j = JSON.parse(m[1]); }
     else { throw new Error('模型未返回合法 JSON'); }
   }
-  if (!json || !Array.isArray(json.items)) throw new Error('返回 JSON 缺少 items 数组');
-  return json.items.map(toV9);
+  if (!j || !Array.isArray(j.items)) throw new Error('返回 JSON 缺少 items 数组');
+  return j.items;
 }
 
-async function mapLimit(arr, limit, iteratee){
-  const ret=[]; const pool=[];
-  for (const it of arr){
-    const p = Promise.resolve().then(()=>iteratee(it));
-    ret.push(p);
-    const done = p.finally(()=> pool.splice(pool.indexOf(done),1));
-    pool.push(done);
-    if (pool.length >= limit) await Promise.race(pool);
+function toV9(item){
+  const type = String(item.type||'choice').toLowerCase();
+  const qt = (type === 'choice') ? 'mcq' : 'short';
+  const options = (qt==='mcq') ? ensureABCD(item.options) : [];
+  const ansLetter = (qt==='mcq') ? toLetter(item.answer) : '';
+  let ansText = '';
+  if (qt==='mcq'){
+    const idx = {A:0,B:1,C:2,D:3}[ansLetter] ?? 0;
+    const src = (item.options && item.options[idx]) ? (item.options[idx].text ?? item.options[idx]) : options[idx] || '';
+    ansText = stripLabel(src);
+  }else{
+    ansText = Array.isArray(item.answer) ? item.answer.join(' / ') : clean(item.answer);
   }
-  return Promise.all(ret);
+  const steps = normalizeSteps(item.explain || '', item.stem || '');
+  let hint = clean(item.hint || '先看时间词，再判断时态与主谓一致。').replace(/[!！]+/g,'。').replace(/。。+/g,'。');
+  const ref = (qt==='mcq') ? `参考答案：${ansLetter}` : `参考答案：${ansText}`;
+  return {
+    question_type: qt,
+    question: clean(item.stem).slice(0,600),
+    options,
+    answer_letter: ansLetter,
+    answer_text: ansText,
+    answer_explanation: `${ref}\n${steps}\n提示：${hint}`.slice(0,2200)
+  };
+}
+
+async function runBatches(total, params){
+  const batches=[]; let remain=total;
+  while(remain>0){ const c=Math.min(BATCH_SIZE, remain); batches.push(c); remain-=c; }
+  const pool=[]; const results=[];
+  for (const c of batches){
+    const p = (async()=>{
+      const controller = new AbortController();
+      const timer = setTimeout(()=>controller.abort(), TIMEOUT_MS);
+      try{
+        const items = await callLLM(c, params, controller.signal);
+        items.forEach(x=> results.push(toV9(x)));
+      }finally{ clearTimeout(timer); }
+    })();
+    pool.push(p);
+    if (pool.length >= PARALLEL){ await Promise.race(pool); }
+  }
+  await Promise.all(pool);
+  return results;
 }
 
 exports.handler = async (event) => {
@@ -158,56 +172,34 @@ exports.handler = async (event) => {
       return { statusCode: 500, body: JSON.stringify({ error: 'Missing OPENAI_API_KEY or OPENAI_BASE_URL' }) };
     }
 
-    let payload = {};
-    try{ payload = JSON.parse(event.body || '{}'); }
+    let body = {};
+    try{ body = JSON.parse(event.body || '{}'); }
     catch{ return { statusCode: 400, body: JSON.stringify({ error: 'Invalid JSON' }) }; }
 
-    // Map from V9 UI fields -> tutor params
-    const total = Math.max(1, Math.min(40, Number(payload.questionCount)||10));
-    const mode = (payload.questionType === 'tenses') ? 'tense' : 'grammar';
-    const form = String(payload.form || 'mixed'); // mcq | short | mixed
-    const subtype = String(payload.subtype || '');
-
-    // Translate to tutor types
+    const total = Math.max(1, Math.min(40, Number(body.questionCount)||10));
+    const mode  = body.questionType === 'tenses' ? 'tense' : 'grammar';
+    const form  = String(body.form || 'mixed');
+    const sub   = String(body.subtype || '');
     let types = [];
-    if (form === 'mcq') types = ['choice'];
-    else if (form === 'short'){
-      if (subtype === 'short-correct') types = ['error'];
-      else if (subtype === 'short-transform') types = ['transform'];
-      else if (subtype === 'short-reorder') types = ['rearrange'];
-      else types = ['fill'];
+    if (form==='mcq') types=['choice'];
+    else if (form==='short'){
+      types = sub==='short-correct' ? ['error']
+            : sub==='short-transform' ? ['transform']
+            : sub==='short-reorder' ? ['rearrange']
+            : ['fill'];
     }else{
       types = ['choice','error','transform','fill','rearrange','reading'];
     }
+    const level = ['easy','normal','hard'].includes(body.level) ? body.level : 'normal';
+    const focus = String(body.focus || '');
 
-    const level = ['easy','normal','hard'].includes(payload.level) ? payload.level : 'normal';
-    const focus = String(payload.focus || '');
+    const params = { types, level, focus, mode };
+    const items = await runBatches(total, params);
+    const out = items.slice(0,total);
+    if (!out.length) return { statusCode: 504, body: JSON.stringify({ error: 'Empty result' }) };
 
-    // batching
-    const batches = []; let rest = total;
-    while(rest>0){ const c = Math.min(BATCH, rest); batches.push(c); rest -= c; }
-
-    const controller = new AbortController();
-    const timer = setTimeout(()=>controller.abort(), Math.max(25000, TIMEOUT_MS + 3000));
-
-    let results = [];
-    const params = { count:0, types, level, focus, mode };
-    const parts = await mapLimit(batches, PARALLEL, async (c)=>{
-      return await callLLM(c, params, controller.signal);
-    });
-    parts.forEach(x=> results = results.concat(x));
-    clearTimeout(timer);
-
-    results = results.slice(0, total);
-    if (!results.length) return { statusCode: 504, body: JSON.stringify({ error: 'Empty result' }) };
-
-    return {
-      statusCode: 200,
-      headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
-      body: JSON.stringify(results)
-    };
+    return { statusCode: 200, headers:{'Content-Type':'application/json','Cache-Control':'no-store'}, body: JSON.stringify(out) };
   }catch(err){
-    const m = (err && (err.message || String(err))).slice(0,1200);
-    return { statusCode: 500, body: JSON.stringify({ error: m }) };
+    return { statusCode: 500, body: JSON.stringify({ error: err.message || String(err) }) };
   }
 };
