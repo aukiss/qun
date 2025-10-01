@@ -209,7 +209,7 @@ function renderQuestions(questions, opts={}){
       toggle.textContent = isShow ? '显示解析' : '隐藏解析';
     });
 
-    card.appendChild(ctrlls);
+    card.appendChild(ctrls);
     card.appendChild(ans);
     questionsContainer.appendChild(card);
   });
@@ -281,8 +281,9 @@ generateBtn.addEventListener('click', async () => {
   const formTypeSel = qs('#formType').value;
   // 将三个“短答类”统一为 short，选择题为 mcq，混合为 mixed
   let formType = 'mixed';
+  let subtype = '';
   if (formTypeSel === 'mcq') formType = 'mcq';
-  else if (formTypeSel.startsWith('short')) formType = 'short';
+  else if (formTypeSel.startsWith('short')) { formType = 'short'; subtype = formTypeSel; }
 
   questionsContainer.innerHTML = '<p class="muted">正在生成题目，请稍候...</p>';
   gradingBar.style.display='none';
@@ -291,7 +292,7 @@ generateBtn.addEventListener('click', async () => {
     const resp = await fetch('/.netlify/functions/generate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ questionType: currentType, questionCount, form: formType })
+      body: JSON.stringify({ questionType: currentType, questionCount, form: formType, subtype })
     });
     if(!resp.ok){
       const detail = await resp.text();

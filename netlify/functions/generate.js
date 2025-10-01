@@ -1,6 +1,7 @@
 
-// netlify/functions/generate.js (v5)
-// 在 v4 的稳健基础上，支持选择题 + 简答/填空（短答案），按批次生成并重试。
+// netlify/functions/generate.js (v8)
+// Support specialized subtypes for short-answer: correct / transform / reorder
+// plus previous batching/retry logic.
 
 async function mapLimit(arr, limit, iteratee) {
   const ret = [];
@@ -17,7 +18,32 @@ async function mapLimit(arr, limit, iteratee) {
   return Promise.all(ret);
 }
 
-async function callUpstream({ BASE, KEY, MODEL, questionType, form, count }) {
+function buildSubtypeHint(subtype){
+  // Detailed instructions tailored for primary school
+  switch (subtype) {
+    case "short-correct":
+      return `题型：改错题
+- 每题给出一个包含常见小错误的句子（单三 s、时态、大小写、可数名词复数、介词、冠词等），难度为小学六年级。
+- 学生需要写出“改正后的完整句子”或“正确词形”。
+- 题干示例：Fix the mistake: "He go to school every day." 或 “Choose the correct form for the underline word…”
+- 正确答案(answer_text) 务必是“改正后的完整句子”或“正确词”，尽量简短、明确。`;
+    case "short-transform":
+      return `题型：句型转换
+- 每题给出一句话，并要求做一种简单转换：肯定↔否定、一般疑问句↔陈述句、一般现在时第三人称变形、一般过去时/将来时、同义改写（同等难度），符合小学六年级。
+- 题干示例：Change into a negative sentence: "She likes apples."；Make a question: "Tom is reading."；Rewrite using "because"...
+- 正确答案(answer_text) 给出“转换后”的目标句，简短、自然。`;
+    case "short-reorder":
+      return `题型：连词成句
+- 给出 4–8 个打乱顺序的词或短语，学生需排成通顺句。
+- 只使用常见词汇与简单时态，避免超纲；注意首字母大写与句末标点。
+- 题干示例：Reorder the words to make a sentence: "to / goes / school / every day / he".
+- 正确答案(answer_text) 是“还原后的完整句子”。`;
+    default:
+      return ``;
+  }
+}
+
+async function callUpstream({ BASE, KEY, MODEL, questionType, form, subtype, count }) {
   const url = `${BASE.replace(/\/+$/, "")}/chat/completions`;
 
   const topicHint =
@@ -29,21 +55,24 @@ async function callUpstream({ BASE, KEY, MODEL, questionType, form, count }) {
     form === "mcq"
       ? "全部出选择题（四选一）。"
       : form === "short"
-      ? "全部出简答/填空题（短答案，英语词/短语/句子，不要超一行）。"
+      ? "全部出简答/填空题（短答案，不超过一行）。"
       : "选择题与简答混合（比例约 1:1）。";
+
+  const subtypeHint = buildSubtypeHint(subtype || "");
 
   const schema = `输出严格 JSON 数组（不要 markdown 代码块）。数组长度为 ${count}。每个元素：
 {
   "question_type": "mcq|short",
   "question": "中文引导 + 英文题干，填空用 (   ) 表示空格",
-  "options": ["A) ...","B) ...","C) ...","D) ..."] // 仅当 question_type=mcq 时需要；short 时给 []
-  "answer_letter": "A|B|C|D" // mcq 时需要
-  "answer_text": "正确答案文本（用于简答；mcq 时也给出对应选项文本，便于导出）",
-  "answer_explanation": "参考答案：A 或 正确答案：xxx\\n解析思路（温柔鼓励）：...\\n分步讲解：1) ... 2) ... 3) ...\\n举例：...\\n提示：给六年级学生的小提醒"
+  "options": ["A) ...","B) ...","C) ...","D) ..."], // 仅当 question_type=mcq 时需要；short 时给 []
+  "answer_letter": "A|B|C|D",                        // mcq 时需要
+  "answer_text": "正确答案文本（short 的答案；mcq 也请给出对应选项文本）",
+  "answer_explanation": "参考答案：A 或 正确答案：xxx\\n分步讲解：1) ... 2) ... 3) ...\\n提示：给六年级学生的小提醒"
 }`;
 
   const systemPrompt = `你是小学英语出题老师，为六年级学生生成练习题。${topicHint}
 ${formHint}
+${subtypeHint}
 ${schema}
 要求：
 - 题干简洁，生活化场景；
@@ -92,7 +121,6 @@ ${schema}
       return { ok: false, status: 502, detail: "invalid JSON from model", raw };
     }
 
-    // 规范化
     arr = arr.map((it) => {
       const qt = String(it.question_type || "").toLowerCase() === "short" ? "short" : "mcq";
       const q = String(it.question || "").slice(0, 500);
@@ -106,7 +134,6 @@ ${schema}
           answer_text = options[idx] || "";
         }
       } else {
-        // short
         answer_letter = "";
         if (!answer_text) answer_text = "";
       }
@@ -146,6 +173,7 @@ exports.handler = async (event) => {
     const questionType = body.questionType || "grammar"; // grammar | tenses
     const total = Math.min(Math.max(parseInt(body.questionCount || 10, 10), 1), 40);
     const form = body.form || "mixed"; // mcq | short | mixed
+    const subtype = body.subtype || ""; // short-correct | short-transform | short-reorder
 
     const BASE = process.env.OPENAI_BASE_URL;
     const KEY = process.env.OPENAI_API_KEY;
@@ -167,7 +195,7 @@ exports.handler = async (event) => {
 
     let results = [];
     const firstPass = await mapLimit(tasks, 2, async (t) =>
-      callUpstream({ BASE, KEY, MODEL, questionType, form, count: t.count })
+      callUpstream({ BASE, KEY, MODEL, questionType, form, subtype, count: t.count })
     );
 
     const failed = [];
@@ -179,7 +207,7 @@ exports.handler = async (event) => {
     if (failed.length) {
       const retryTasks = failed.map((f) => ({ count: Math.min(3, f.need) }));
       const secondPass = await mapLimit(retryTasks, 1, async (t) =>
-        callUpstream({ BASE, KEY, MODEL, questionType, form, count: t.count })
+        callUpstream({ BASE, KEY, MODEL, questionType, form, subtype, count: t.count })
       );
       secondPass.forEach((res) => {
         if (res.ok) results = results.concat(res.data);
