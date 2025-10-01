@@ -141,6 +141,26 @@ function detectSubject(line){
   }
   return '';
 }
+
+function subtypeToCN(subtype, qt){
+  const map = {
+    choice: '【操作】选择正确形式：',
+    error: '【操作】把句子改成正确形式：',
+    transform: '【操作】按要求改写句子：',
+    rearrange: '【操作】把词语连成句子：',
+    fill: '【操作】在空格内填入正确形式：'
+  };
+  if (qt === 'mcq') return map.choice;
+  return map[subtype] || '【操作】按要求作答：';
+}
+function buildBilingualQuestion(qt, raw, subtype){
+  const q = String(raw||'').replace(/(?:参考答案|答案)\s*[:：].*$/i,'').trim();
+  const lines = q.split(/\n+/).map(s=>s.trim()).filter(Boolean);
+  const en = (lines.find(l=>/[A-Za-z]/.test(l)) || q || 'Write the correct form.').trim();
+  const cn = subtypeToCN(subtype, qt);
+  return { display: `${cn}\n${en}`, en };
+}
+
 function buildHeuristicSteps(qt, enLine, options, answer_letter, answer_text, subtype){
   const steps = [];
   if (qt === 'mcq'){
@@ -190,17 +210,6 @@ function buildHeuristicSteps(qt, enLine, options, answer_letter, answer_text, su
   return steps.join('\n');
 }
 
-function extractEnglishOnly(raw){
-  const q = String(raw||'').replace(/(?:参考答案|答案)\s*[:：].*$/i,'').trim();
-  const lines = q.split(/\n+/).map(s=>s.trim()).filter(Boolean);
-  // prefer the line with letters and no CJK
-  for (const l of lines){
-    if (/[A-Za-z]/.test(l) && !/[\u4e00-\u9fff]/.test(l)) return l;
-  }
-  // fallback: strip any leading Chinese brackets like 【操作】
-  return q.replace(/^【[^】]*】\s*/,'').trim();
-}
-
 function buildExplanation(item, qt, options, answer_letter, answer_text, enLine, subtype){
   let ex = String(item.answer_explanation || '').trim();
   const hasSteps = /分步讲解/.test(ex);
@@ -227,11 +236,12 @@ function toV9Schema(item){
     answer_text = options[idx]?.replace(/^\s*[A-D]\)\s*/,'') || '';
   }
 
-  const en = extractEnglishOnly(rawQ);
+  const subtype = String(item.subtype || '').toLowerCase() || (qt==='mcq'?'choice':'');
+  const { display, en } = buildBilingualQuestion(qt, rawQ, subtype);
   const answer_explanation = buildExplanation(item, qt, options, answer_letter, answer_text, en, subtype);
   return {
     question_type: qt,
-    question: en.slice(0, 600),
+    question: display.slice(0, 600),
     options,
     answer_letter,
     answer_text,
