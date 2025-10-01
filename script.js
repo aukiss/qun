@@ -428,14 +428,6 @@ function escapeHtml(str){
     .replace(/"/g,'&quot;')
     .replace(/'/g,'&#39;');
 }
-function renderExplanation(ex){
-  const text = String(ex||'').replace(/\r/g,'');
-  const refMatch = text.match(/参考答案[:：]\s*([^\n]+)/);
-  let stepsBlock = '';
-  const sp = text.split(/分步讲解[:：]/);
-  if (sp.length > 1){
-    stepsBlock = sp[1].split(/提示[:：]/)[0] || '';
-  }
   const hintMatch = text.match(/提示[:：]\s*([\s\S]*)$/);
   const steps = stepsBlock.split(/\n+/).map(s=>s.trim()).filter(Boolean).map(s=>s.replace(/^\d+\)\s*/,''));
   let html = '<div class="exp">';
@@ -447,5 +439,54 @@ function renderExplanation(ex){
   }
   if (hintMatch){ html += `<div class="exp-hint"><b>提示：</b> ${escapeHtml(hintMatch[1].trim())}</div>`; }
   html += '</div>';
+  return html;
+}
+
+
+function renderExplanation(ex){
+  const text = String(ex||'').replace(/\r/g,'');
+  // sanitize hint punctuation
+  const normalized = text.replace(/提示[:：]\s*([^\n]+)[!！]+/g, (m,p1)=>`提示：${p1.replace(/[!！]+/g,'。')}`);
+  // split sections
+  const refMatch = normalized.match(/参考答案[:：]\s*([^\n]+)/);
+  // Try to capture steps after label
+  let stepsBlock = '';
+  const afterSteps = normalized.split(/分步讲解[:：]/);
+  if (afterSteps.length > 1){
+    stepsBlock = afterSteps[1].split(/提示[:：]/)[0] || '';
+  }
+  // Parse steps with several bullet patterns
+  let steps = [];
+  const lines = stepsBlock.split(/\n+/).map(s=>s.trim()).filter(Boolean);
+  lines.forEach(s=>{
+    const m = s.match(/^(?:\(?\s*\d+\s*[\)\）\.、]\s*|[①②③④⑤⑥⑦⑧⑨]\s*)(.+)$/);
+    if (m) steps.push(m[1].trim());
+    else if (s) steps.push(s);
+  });
+  // If still empty, try to find numbered lines anywhere
+  if (!steps.length){
+    const re = /(^|\n)\s*(?:\(?\d+\s*[\)\）\.、]|[①②③④⑤⑥⑦⑧⑨])\s*([^\n]+)/g;
+    let m;
+    while ((m = re.exec(normalized)) !== null){
+      steps.push(m[2].trim());
+    }
+  }
+  // Build HTML
+  function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+  let html = '<div class="exp">';
+  if (refMatch){ html += `<div class="exp-ref"><b>参考答案：</b> ${esc(refMatch[1].trim())}</div>`; }
+  if (steps.length){
+    html += '<div class="exp-steps"><b>分步讲解：</b><ol>';
+    html += steps.map(s=>`<li>${esc(s)}</li>`).join('');
+    html += '</ol></div>';
+  }
+  const hintMatch = normalized.match(/提示[:：]\s*([\s\S]*)$/);
+  if (hintMatch){ html += `<div class="exp-hint"><b>提示：</b> ${esc(hintMatch[1].trim().replace(/[!！]+/g,'。'))}</div>`; }
+  html += '</div>';
+
+  // Fallback: if neither steps nor ref extracted, show raw
+  if (!refMatch && !steps.length && !hintMatch){
+    return `<pre>${esc(text)}</pre>`;
+  }
   return html;
 }

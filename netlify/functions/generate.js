@@ -162,34 +162,34 @@ function buildHeuristicSteps(qt, enLine, options, answer_letter, answer_text, su
     else steps.push(`3) 一般现在时第三人称单数要加 -s/-es。`);
     const example = enLine.replace(/\(\s*\)/, word||answer_text||'the correct form');
     steps.push(`举例：${example}`);
-    return steps.join('\n');
+    return steps.join('\n').replace(/\s*\n\s*/g,'\n');
   }
   if (subtypeHint === 'error'){
     steps.push('1) 找出句中错误（时态、主谓一致、拼写/大小写等）。');
     steps.push('2) 按规则改正，保留原意与语序。');
     steps.push('3) 检查首字母大小写与句号。');
     if (answer_text) steps.push(`举例：${/[.!?]$/.test(answer_text)?answer_text:(answer_text+'.')}`);
-    return steps.join('\n');
+    return steps.join('\n').replace(/\s*\n\s*/g,'\n');
   }
   if (subtypeHint === 'transform'){
     steps.push('1) 明确目标句型（一般疑问句/否定句/祈使句等）。');
     steps.push('2) 根据主语与时态选择助动词与动词形式。');
     steps.push('3) 注意语序与标点（问号/句号）。');
     if (answer_text) steps.push(`举例：${/[!?]$/.test(answer_text)?answer_text:(answer_text+'?')}`);
-    return steps.join('\n');
+    return steps.join('\n').replace(/\s*\n\s*/g,'\n');
   }
   if (subtypeHint === 'rearrange'){
     steps.push('1) 先找主语和谓语，再放时间/地点等。');
     steps.push('2) 注意首字母大写与句末标点。');
     steps.push('3) 检查词序是否符合英文表达习惯。');
     if (answer_text) steps.push(`举例：${/[.!?]$/.test(answer_text)?answer_text:(answer_text+'.')}`);
-    return steps.join('\n');
+    return steps.join('\n').replace(/\s*\n\s*/g,'\n');
   }
   steps.push('1) 结合时间词判断时态或词性。');
   steps.push('2) 根据主语人称数选择形式。');
   steps.push('3) 注意词形变化与拼写。');
   if (answer_text) steps.push(`举例：${/[.!?]$/.test(answer_text)?answer_text:(answer_text+'.')}`);
-  return steps.join('\n');
+  return steps.join('\n').replace(/\s*\n\s*/g,'\n');
 }
 
 function subtypeToCN(subtypeHint, qt){
