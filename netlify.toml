@@ -3,6 +3,6 @@
   publish = "."
 
 [[headers]]
-  for = "/.netlify/functions/*"
+  for = "/*"
   [headers.values]
     Cache-Control = "no-store"

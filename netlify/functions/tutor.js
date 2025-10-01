@@ -1,199 +1,116 @@
-
-// netlify/functions/tutor.js  (v10.1) —— 仅更新“出题逻辑 & 解析逻辑”，前端保持不变
-// 目标：
-// - 题干仅英文（不夹中文翻译）；
-// - 结构完全贴合前端：{ items: [ { type, stem, options?, answer, explain, hint } ] }
-// - 解析风格：孩子喜欢的“分步讲解 + 简短提示（中文）”；参考答案单独给在 answer 字段即可；
-// - 选择题 4 选 1（A-D），干扰项贴近真实错误；
-// - 改错/句型转换/连词成句/填空：答案可以是字符串或 ["可接受多个"]；
-// - 避免超纲，围绕小学六年级语法&时态。
-
-const TIMEOUT_MS = 12000;
-
-function clampInt(n, lo, hi, d=10){
-  const x = parseInt(n ?? d, 10);
-  return Math.max(lo, Math.min(hi, isNaN(x)? d : x));
-}
-
-function buildTypeGuidance(type){
-  switch(type){
-    case 'choice':
-      return `出题类型：选择题（四选一）
-- 题干（stem）必须全英文、简短自然；
-- 提供 4 个选项 options：[{ "value":"A","text":"..." }, ...]；仅 1 个正确；
-- 干扰项要贴近常错点（主谓一致、时态、冠词/介词、代词形式、比较级等）。
-- answer 用 "A"/"B"/"C"/"D" 指示正确项；explain 用中文做“分步讲解”；hint 用一句话中文提示。`;
-    case 'error':
-      return `出题类型：改错题
-- 给 1 句含 1 处常见小错误的英文句子（单三 s、时态、大小写、复数/不可数、介词/冠词等）；
-- 学生任务：改成正确句子；
-- stem 仅英文；answer 给“改正后的完整句子”，如可接受多种写法可返回数组；
-- explain 中文“分步讲解”，hint 中文简短提示。`;
-    case 'transform':
-      return `出题类型：句型转换
-- 常见转换：肯定↔否定、一般疑问句↔陈述句、一般现在/过去/进行/将来、同义改写（小学难度）；
-- stem 仅英文；answer 为“转换后的目标句”（或可接受的多种写法数组）；
-- explain 中文“分步讲解”，hint 中文简短提示。`;
-    case 'rearrange':
-      return `出题类型：连词成句
-- 给出 5–8 个被打乱顺序的常见词/短语；
-- stem 仅英文，包含打乱的词；answer 为“还原后的完整句”；
-- explain 中文“分步讲解”，hint 中文简短提示。`;
-    case 'fill':
-      return `出题类型：填空/简答
-- 在句中用 (   ) 表示空；
-- stem 仅英文；answer 为正确词/短语/短句（如有同义可返回数组）；
-- explain 中文“分步讲解”，hint 中文简短提示。`;
-    case 'reading':
-      return `出题类型：阅读理解（可选）
-- 20–60 词英文短文 + 1 个理解问题；
-- stem 为英文问题；如需上下文，可把短文放在 stem 开头一行后再给问题；
-- answer 给出正确要点短句；explain 中文“分步讲解”，hint 中文提示。`;
-    default:
-      return '';
-  }
-}
-
-function buildSystemPrompt({mode, types, level, topic, count}){
-  const typeNotes = (types||['choice']).map(buildTypeGuidance).join('\n\n');
-  const topicLine = topic ? `- 选做知识点倾向：${topic}` : '- 选做知识点倾向：常见小学生语法/时态';
-  return `你是小学六年级英语出题老师。请生成 ${count} 道题。
-【出题总要求】
-- 题干（stem）必须**全英文**，不要出现任何中文翻译或中文提示；生活化、简洁；
-- 难度：${level || '基础到中等'}；聚焦小学常见语法与四大时态；避免生僻词与复杂从句；
-- 每题都给出：answer（参考答案）、explain（中文分步讲解，编号 1) 2) 3) …）、hint（中文一句提示）。
-- 严格按 JSON 输出：{ "items": [ ... ] }，不要 markdown 代码块。
-
-【模式说明】
-- 模式：${mode==='tense'?'时态专项（一般现在/过去/进行/将来）':'语法综合'}。
-${topicLine}
-
-${typeNotes}
-
-【JSON 架构】
-{
-  "items":[
-    {
-      "type": "choice|error|transform|rearrange|fill|reading",
-      "stem": "Question in ENGLISH only (use (   ) for blanks when needed). No Chinese.",
-      "options": [ { "value": "A", "text": "..." }, { "value": "B", "text": "..." }, { "value": "C", "text": "..." }, { "value": "D", "text": "..." } ], // 仅 choice 需要
-      "answer": "A" | "text" | ["text1","text2"], // choice 用字母；其他题型给文本或多个可接受答案
-      "explain": "中文分步讲解：1) … 2) … 3) … （语气温和，针对小学生）",
-      "hint": "中文一句提示"
-    }
-  ]
-}`;
-}
-
-async function callUpstream({ BASE, KEY, MODEL, sysPrompt }){
-  const url = `${BASE.replace(/\/+$/,'')}/chat/completions`;
-  const controller = new AbortController();
-  const timer = setTimeout(()=>controller.abort(), TIMEOUT_MS);
-
-  try {
-    const resp = await fetch(url, {
-      method: 'POST',
-      headers: { 'Authorization': `Bearer ${KEY}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: MODEL || 'gpt-4o-mini',
-        temperature: 0.5,
-        max_tokens: 1600,
-        messages: [
-          { role: 'system', content: sysPrompt },
-          { role: 'user', content: '请严格按上面的 JSON 模式输出。' }
-        ]
-      }),
-      signal: controller.signal
-    });
-    if(!resp.ok){
-      const t = await resp.text();
-      return { ok:false, status: resp.status, detail: t.slice(0,1500) };
-    }
-    const data = await resp.json();
-    const raw = data?.choices?.[0]?.message?.content ?? '{}';
-    const cleaned = raw.replace(/```json|```/g,'').trim();
-    let json;
-    try{
-      json = JSON.parse(cleaned);
-    }catch(e){
-      return { ok:false, status: 502, detail:'invalid JSON', raw: cleaned };
-    }
-
-    // 规范化：确保字段存在，修剪过长文本，清洗选项
-    const items = Array.isArray(json.items) ? json.items : [];
-    const norm = items.map((it, idx)=>{
-      const type = String(it.type || 'choice').toLowerCase();
-      const stem = String(it.stem || '').replace(/[\u4e00-\u9fa5]/g,'').trim().slice(0,400);
-      let options = Array.isArray(it.options) ? it.options.slice(0,4).map((op,i)=>({
-        value: ['A','B','C','D'][i] || 'A',
-        text: String((op?.text ?? op)).replace(/^\s*[A-D]\s*[\)\.\u3001、]\s*/i,'').trim().slice(0,160)
-      })) : [];
-      if(type!=='choice'){ options = []; }
-      let answer = it.answer;
-      if(type==='choice'){
-        const v = String(answer || 'A').toUpperCase();
-        answer = ['A','B','C','D'].includes(v) ? v : 'A';
-      }else{
-        if(Array.isArray(answer)){
-          answer = answer.map(s=>String(s||'').slice(0,120)).filter(Boolean);
-          if(!answer.length) answer = '';
-        }else{
-          answer = String(answer||'').slice(0,160);
-        }
-      }
-      const explain = String(it.explain || '').slice(0,1200);
-      const hint = String(it.hint || '').slice(0,160);
-      return { type, stem, options, answer, explain, hint };
-    });
-
-    return { ok:true, data: { items: norm } };
-  } catch(err){
-    return { ok:false, status: 504, detail: 'timeout or fetch error: ' + (err?.message || String(err)) };
-  } finally{
-    clearTimeout(timer);
-  }
-}
-
+// netlify/functions/tutor.js (CommonJS handler for Netlify Functions)
 exports.handler = async (event, context) => {
-  try{
-    if(event.httpMethod !== 'POST'){
+  try {
+    if (event.httpMethod !== 'POST') {
       return { statusCode: 405, body: JSON.stringify({ error: 'Use POST' }) };
     }
 
     const { OPENAI_API_KEY, OPENAI_BASE_URL, OPENAI_MODEL } = process.env;
-    if(!OPENAI_API_KEY || !OPENAI_BASE_URL){
+    if (!OPENAI_API_KEY || !OPENAI_BASE_URL) {
       return { statusCode: 500, body: JSON.stringify({ error: 'Missing OPENAI_API_KEY or OPENAI_BASE_URL' }) };
     }
 
-    let body = {};
-    try{ body = JSON.parse(event.body || '{}'); }catch{ body = {}; }
-
-    const mode = (body.mode === 'tense') ? 'tense' : 'grammar';
-    const count = clampInt(body.count, 1, 30, 10);
-    const types = Array.isArray(body.types) && body.types.length ? body.types : ['choice'];
-    const level = body.level || 'basic';
-    const topic = body.topic || '';
-
-    const sysPrompt = buildSystemPrompt({ mode, types, level, topic, count });
-    const res = await callUpstream({ BASE: OPENAI_BASE_URL, KEY: OPENAI_API_KEY, MODEL: OPENAI_MODEL, sysPrompt });
-
-    if(!res.ok){
-      return { statusCode: res.status || 500, body: JSON.stringify({ error: res.detail || 'upstream error' }) };
+    let payload = {};
+    try {
+      payload = JSON.parse(event.body || '{}');
+    } catch {
+      return { statusCode: 400, body: JSON.stringify({ error: 'Invalid JSON' }) };
     }
 
-    // 若返回题量不足，直接复制补齐（避免前端崩）
-    let items = res.data.items || [];
-    while(items.length < count && items.length>0){
-      items.push(items[items.length-1]);
+    const count = Math.max(1, Math.min(20, Number(payload.count) || 10));
+    const types = Array.isArray(payload.types) && payload.types.length ? payload.types : ['choice','error','transform','fill','rearrange','reading'];
+    const level = ['easy','normal','hard'].includes(payload.level) ? payload.level : 'normal';
+    const focus = (payload.focus || '').toString();
+  const mode = (payload.mode || 'grammar').toString();
+
+    const systemPrompt = `
+你是一名小学英语教研员，熟悉“译林版”六年级下/上册语法要求。请根据参数生成题库，并严格输出 JSON（不要多余文字）。
+【目标】生成适合六年级学生的题目，覆盖：时态（一般现在/过去/进行）、主谓一致、代词（物主/反身）、形容词/副词比较级与最高级、句型转换、连词成句、短文语法选择。讲解要口语化、分步骤、举例子，解释为什么错。
+【难度】
+- easy：概念直给+明显提示
+- normal：常规课内
+- hard：选择更易混点、加干扰项
+【格式】只输出 JSON（面向学生的操作提示用中文，例如“把下列句子改为否定句/一般疑问句/选择正确形式”；英语例句本身保持英文）：
+{
+  "meta": { "version": "1.0", "level": "normal|easy|hard", "types": ["choice", ...] },
+  "items": [
+    {
+      "id": "q1",
+      "type": "choice|error|transform|fill|rearrange|reading",
+      "stem": "题干（中文或英文+必要上下文）",
+      "options": [ { "value": "A", "text": "选项文本" }, ... ], // 非选择题可省略
+      "answer": "A" | "答案文本" | ["可接受多个"],
+      "explain": "分步讲解：\n1) 先看时间状语…\n2) 主语是三单…\n3) 规则/不规则变化…\n举例：This/That…",
+      "hint": "给学生的小提示，可空"
     }
-    items = items.slice(0, count);
+  ]
+}
+【出题参数】
+- 模式: ${mode}（grammar=语法综合；tense=时态专项，仅围绕一般现在/一般过去/现在进行混合）
+- 数量: ${count}
+- 题型: ${types.join(', ')}
+- 难度: ${level}
+- 知识点优先: "${focus}"
+【约束】
+- 操作指令必须中文；避免出现“Transform this sentence ...”这类英文提示。
+- 模式为 tense 时：每题都聚焦三类时态，解析强调“看时间状语→判时态→动词形式/句型转换”。
+- 严格可判分：选择题 answer 用 "A/B/C/D"；填空给出唯一或可接受数组；改错题提供“错因+正确句子”。
+- 题干简洁，贴六年级生活语境（上学、课余、家庭、校园活动）。
+- 解析要让“做错的孩子也能看懂”，避免术语堆砌，强调“如何快速判断”。
+`.trim();
+
+    const userPrompt = `
+请生成 ${count} 道题。题型：${types.join(', ')}；难度：${level}；知识点优先：${focus || '无特别指定'}；模式：${mode}。
+严格只返回 JSON。`.trim();
+
+    const body = {
+      model: OPENAI_MODEL || 'gpt-4o-mini',
+      temperature: 0.7,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt }
+      ]
+    };
+
+    const upstream = await fetch(`${OPENAI_BASE_URL.replace(/\/+$/,'')}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${OPENAI_API_KEY}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(body)
+    });
+
+    if (!upstream.ok) {
+      const t = await upstream.text().catch(()=> '');
+      return { statusCode: 500, body: JSON.stringify({ error: `Upstream ${upstream.status}: ${t}` }) };
+    }
+
+    const out = await upstream.json();
+    const content = out?.choices?.[0]?.message?.content?.trim() || '';
+
+    let json;
+    try {
+      json = JSON.parse(content);
+    } catch (e) {
+      const m = content.match(/```json\s*([\s\S]*?)```/i);
+      if (m) {
+        json = JSON.parse(m[1]);
+      } else {
+        return { statusCode: 500, body: JSON.stringify({ error: '模型未返回合法 JSON：' + e.message }) };
+      }
+    }
+
+    if (!json || !Array.isArray(json.items)) {
+      return { statusCode: 500, body: JSON.stringify({ error: '返回 JSON 缺少 items 数组' }) };
+    }
 
     return {
       statusCode: 200,
-      headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'Access-Control-Allow-Origin': '*' },
-      body: JSON.stringify({ items })
+      headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
+      body: JSON.stringify(json)
     };
-  }catch(err){
+  } catch (err) {
     return { statusCode: 500, headers: { 'Access-Control-Allow-Origin': '*' }, body: JSON.stringify({ error: err.message }) };
   }
 };

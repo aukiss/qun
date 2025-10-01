@@ -1,94 +1,307 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0"/>
-  <title>六年级英语出题器 · 语法与时态</title>
-  <link rel="stylesheet" href="./style.css" />
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>译林版六年级英语 · 出题与讲解 · v5.3.0-clean</title>
+<style>
+  :root {
+    --bg: #0b1020;
+    --card: #11162b;
+    --muted: #8a93b2;
+    --text: #e7ebff;
+    --pri: #6ea8ff;
+    --pri-2: #9ad1ff;
+    --ok:#34d399;
+    --err:#fb7185;
+    --shadow: 0 8px 30px rgba(0,0,0,.3);
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:radial-gradient(1200px 600px at 20% -10%, rgba(88,133,255,.25), transparent), radial-gradient(900px 500px at 90% 0%, rgba(179,127,255,.2), transparent), var(--bg); color:var(--text); font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial}
+  header{padding:28px 16px 8px;text-align:center}
+  header h1{margin:0 0 6px;font-size:24px;letter-spacing:.5px}
+  header p{margin:0;color:var(--muted)}
+  .wrap{max-width:960px;margin:18px auto;padding:0 14px}
+  .card{background:linear-gradient(180deg, rgba(255,255,255,.04), rgba(255,255,255,.02)); border:1px solid rgba(255,255,255,.06); border-radius:16px; box-shadow:var(--shadow); padding:18px; margin-bottom:16px}
+  .row{display:flex;gap:12px;flex-wrap:wrap}
+  .row .col{flex:1 1 220px}
+  label{display:block;font-size:13px;color:var(--muted);margin-bottom:6px}
+  input,select{width:100%;padding:10px 12px;border:1px solid rgba(255,255,255,.12);border-radius:12px;background:rgba(255,255,255,.04);color:var(--text);font-size:14px;outline:none}
+  .btn{appearance:none;border:0;border-radius:14px;padding:12px 16px;font-weight:700;cursor:pointer;transition:transform .05s ease, box-shadow .2s ease}
+  .btn:active{transform:translateY(1px)}
+  .btn-primary{background:linear-gradient(135deg, var(--pri), var(--pri-2)); color:#0b1020; box-shadow:0 8px 24px rgba(110,168,255,.35)}
+  .btn-ghost{background:transparent;border:1px solid rgba(255,255,255,.12);color:var(--text)}
+  .btn-big{font-size:18px; padding:16px 18px; border-radius:18px}
+  .grid2{display:grid; grid-template-columns:1fr 1fr; gap:12px}
+  .q{border:1px dashed rgba(255,255,255,.15);border-radius:14px;padding:14px;margin:10px 0}
+  .q h3{margin:0 0 6px;font-size:16px}
+  .opt{margin:6px 0}
+  .badge{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;background:rgba(255,255,255,.08);color:var(--pri-2);margin-left:8px;border:1px solid rgba(255,255,255,.14)}
+  .ans{margin-top:8px;background:rgba(0,0,0,.25);border:1px solid rgba(255,255,255,.08);border-radius:12px;padding:10px;display:none}
+  .ans.show{display:block}
+  .ok{color:var(--ok)} .err{color:var(--err)}
+  .opt.selected{background:rgba(110,168,255,.12); border-radius:8px; padding:4px 6px;}
+  .opt.good{background:rgba(52,211,153,.14)}
+  .opt.bad{background:rgba(251,113,133,.14)}
+  .flex{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+  .right{margin-left:auto}
+  .muted{color:var(--muted)} .small{font-size:12px}
+  #toast{position:fixed;right:16px;bottom:16px;max-width:360px;background:#0f172a;color:#fff;padding:10px 12px;border-radius:10px;display:none;box-shadow:0 8px 24px rgba(0,0,0,.3);font-size:14px;z-index:9999;border:1px solid rgba(255,255,255,.08)}
+  .footer{padding:20px;text-align:center;color:var(--muted);font-size:12px}
+</style>
 </head>
 <body>
-  <main class="container">
-    <header class="hero">
-      <h1>🎓 六年级英语出题器</h1>
-      <p class="sub">@凉风有信开发 提建议微信wuliaotop</p>
-    </header>
+<header>
+  <h1>译林版·六年级英语 语法出题与讲解 <span class="badge">v5.3.0-clean</span></h1>
+  <p class="muted">两大模式：<strong>语法综合</strong> & <strong>时态专项</strong> · 题干中文 · 导出无序号</p>
+</header>
 
-    <section class="controls card">
-      <div class="grid">
-        <label class="field">
-          <span>题量</span>
-          <select id="questionCount">
-            <option value="10" selected>10 题</option>
-            <option value="15">15 题</option>
-            <option value="20">20 题</option>
-          </select>
-        </label>
-
-        <label class="field">
-          <span>难度</span>
-          <select id="difficulty">
-            <option value="basic" selected>基础</option>
-            <option value="intermediate">提高</option>
-            <option value="challenge">挑战</option>
-          </select>
-        </label>
-
-        <label class="field">
-          <span>知识点（可选）</span>
-          <select id="topic">
-            <option value="">不限</option>
-            <option value="subject-verb agreement">主谓一致</option>
-            <option value="pronouns">代词</option>
-            <option value="prepositions">介词</option>
-            <option value="articles">冠词</option>
-            <option value="comparatives">比较级入门</option>
-            <option value="present simple">一般现在时</option>
-            <option value="past simple">一般过去时</option>
-            <option value="present continuous">现在进行时</option>
-            <option value="future simple">一般将来时</option>
-          </select>
-        </label>
-
-        <label class="field">
-          <span>题型选择</span>
-          <select id="formType">
-            <option value="mixed" selected>混合</option>
-            <option value="mcq">选择题</option>
-            <option value="short-correct">改错题</option>
-            <option value="short-transform">句型转换</option>
-            <option value="short-reorder">连词成句</option>
-          </select>
-        </label>
+<div class="wrap">
+  <div class="card">
+    <div class="grid2">
+      <button id="btnGrammar" class="btn btn-primary btn-big">📘 语法综合</button>
+      <button id="btnTense" class="btn btn-ghost btn-big">⏱️ 时态专项</button>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <div class="col">
+        <label>题目数量（1–20）</label>
+        <input id="count" type="number" min="1" max="20" value="10" />
       </div>
-
-      <div class="toolbar">
-        <div class="btn-row">
-          <button id="btnGrammar" class="btn pill toggle on">📘 语法</button>
-          <button id="btnTenses" class="btn pill toggle">⏰ 时态</button>
-          <button id="generateBtn" class="btn primary large">🪄 一键生成</button>
-        </div>
-        <div class="btn-row">
-          <button id="exportPaperBtn" class="btn outline">🖨️ 导出试卷</button>
-          <button id="exportPaperSolBtn" class="btn outline">🖨️ 导出试卷+解析</button>
-        </div>
-        <div class="btn-row">
-          <button id="viewWrongBtn" class="btn ghost">📚 查看错题本</button>
-          <button id="exportWrongPdfBtn" class="btn ghost">🖨️ 错题本PDF</button>
-          <button id="clearWrongBtn" class="btn ghost subtle">🗑️ 清空错题本</button>
-        </div>
+      <div class="col">
+        <label>题型（按住 Ctrl/⌘ 多选）</label>
+        <select id="types" multiple size="6" title="按住 Ctrl/⌘ 多选">
+          <option value="choice" selected>选择题</option>
+          <option value="error" selected>改错题</option>
+          <option value="transform" selected>句型转换</option>
+          <option value="fill" selected>填空题</option>
+          <option value="rearrange">连词成句</option>
+          <option value="reading">短文语法选择</option>
+        </select>
       </div>
-    </section>
+      <div class="col">
+        <label>难度</label>
+        <select id="level">
+          <option value="easy">基础</option>
+          <option value="normal" selected>常规</option>
+          <option value="hard">提升</option>
+        </select>
+      </div>
+      <div class="col">
+        <label>知识点优先（逗号分隔，可空）</label>
+        <input id="focus" placeholder="如：一般现在时, 物主代词, 比较级" />
+      </div>
+    </div>
 
-    <section id="questionsContainer" class="questions">
-      <p class="muted">选择条件后，点“🪄 一键生成”。</p>
-    </section>
+    <div class="flex" style="margin-top:12px">
+      <button id="gen" class="btn btn-primary">📝 一键出题</button>
+      <button id="showAll" class="btn-ghost" disabled>📖 显示/隐藏全部解析</button>
+      <button id="exportDoc" class="btn-ghost">🧾 导出 Word(.doc)</button>
+      <button id="exportPdf" class="btn-ghost">🖨️ 导出 PDF</button>
+      <span id="modeTag" class="badge">当前模式：语法综合</span>
+      <span id="stat" class="muted right"></span>
+    </div>
+    <div class="small muted" style="margin-top:6px">
+      温馨提示：本页不会显示任何自检模块；若无法出题，请在 Netlify 检查环境变量设置是否正确（OPENAI_API_KEY / OPENAI_BASE_URL / OPENAI_MODEL）。
+    </div>
+  </div>
 
-    <section class="grading-bar" id="gradingBar" style="display:none;">
-      <div id="statText" class="muted small"></div>
-      <button id="gradeQuizBtn" class="btn primary">✅ 在线批改</button>
-    </section>
-  </main>
+  <div id="list" class="card">
+    <div class="muted">点击“📝 一键出题”来生成题目。</div>
+  </div>
 
-  <script src="./script.js"></script>
+  <div class="card">
+    <h3 style="margin-top:0">答题统计</h3>
+    <div class="flex">
+      <button id="check" class="btn-ghost" disabled>✅ 批改</button>
+      <button id="reset" class="btn-ghost" disabled>♻️ 重置</button>
+      <div id="score" class="right muted"></div>
+    </div>
+  </div>
+
+  <div class="footer">© 2025 译林版六年级语法练习 · 导出文档无序号（数字已移除）</div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+(function(){
+  const $ = (s)=>document.querySelector(s);
+  const list = $('#list'), stat=$('#stat'), score=$('#score');
+  const showAllBtn=$('#showAll'), checkBtn=$('#check'), resetBtn=$('#reset');
+  const genBtn=$('#gen'), exportDocBtn=$('#exportDoc'), exportPdfBtn=$('#exportPdf');
+  const toastEl=$('#toast'); const modeTag=$('#modeTag');
+  const btnGrammar=$('#btnGrammar'), btnTense=$('#btnTense');
+
+  let data=null, userAns={}, mode='grammar';
+
+  function toast(msg, ms=2200){ toastEl.textContent=msg; toastEl.style.display='block'; setTimeout(()=>toastEl.style.display='none',ms); }
+  function getTypes(){ const sel=Array.from($('#types').selectedOptions||[]).map(o=>o.value); return sel.length? sel : ['choice','error','transform','fill','rearrange','reading']; }
+
+  function setMode(m){
+    mode = m;
+    if(m==='grammar'){
+      btnGrammar.classList.add('btn-primary'); btnGrammar.classList.remove('btn-ghost');
+      btnTense.classList.add('btn-ghost'); btnTense.classList.remove('btn-primary');
+      modeTag.textContent='当前模式：语法综合';
+    }else{
+      btnTense.classList.add('btn-primary'); btnTense.classList.remove('btn-ghost');
+      btnGrammar.classList.add('btn-ghost'); btnGrammar.classList.remove('btn-primary');
+      modeTag.textContent='当前模式：时态专项';
+    }
+  }
+  btnGrammar.addEventListener('click', ()=> setMode('grammar'));
+  btnTense.addEventListener('click', ()=> setMode('tense'));
+
+  function qEl(q, idx){
+    const wrap=document.createElement('div'); wrap.className='q';
+    const title=document.createElement('h3'); title.innerHTML=`${q.stem} <span class="badge">${q.type}</span>`; wrap.appendChild(title);
+    if(q.options?.length){
+      // 取消 A/B/C/D 标签，在导出和页面都以圆点展示
+      const ul=document.createElement('ul'); ul.style.margin='8px 0'; ul.style.paddingLeft='18px';
+      q.options.forEach(opt=>{ const li=document.createElement('li'); li.className='opt'; li.innerHTML=`<label><input type="radio" name="q${idx}" value="${opt.value}" /> ${opt.text}</label>`; li.addEventListener("change", (e)=>{ ul.querySelectorAll(".opt").forEach(x=>x.classList.remove("selected")); li.classList.add("selected");}); ul.appendChild(li); });
+      wrap.appendChild(ul);
+    }else{
+      const inp=document.createElement('input'); inp.placeholder='在这里作答'; inp.style.marginTop='6px'; inp.addEventListener('input', e=> userAns[idx]=(e.target.value||'').trim()); wrap.appendChild(inp);
+    }
+    const ans=document.createElement('div'); ans.className='ans'; ans.innerHTML=`
+      <div><strong>参考答案：</strong> ${Array.isArray(q.answer)? q.answer.join(' / ') : (q.answer ?? '—')}</div>
+      <div style="margin-top:6px"><strong>解析思路：</strong><br>${(q.explain||'—').replaceAll('\\n','<br>')}</div>
+      ${q.hint? `<div style="margin-top:6px" class="small muted"><strong>提示：</strong>${q.hint}</div>`:''}`;
+    wrap.appendChild(ans);
+    wrap.addEventListener('change', (e)=>{ if(e.target && e.target.name===`q${idx}`){ userAns[idx]=e.target.value; } });
+    title.style.cursor='pointer'; title.title='点击展开/收起解析'; title.addEventListener('click', ()=> ans.classList.toggle('show'));
+    return wrap;
+  }
+
+  function renderList(){
+    list.innerHTML='';
+    if(!data?.items?.length){ list.innerHTML='<div class="muted">没有题目，请重新生成。</div>'; return; }
+    data.items.forEach((q,idx)=> list.appendChild(qEl(q, idx)));
+    checkBtn.disabled=false; resetBtn.disabled=false; showAllBtn.disabled=false;
+    stat.textContent=`已生成 ${data.items.length} 题`;
+  }
+
+  function toggleAllExplain(){ const blocks=list.querySelectorAll('.ans'); const anyHidden=Array.from(blocks).some(b=>!b.classList.contains('show')); blocks.forEach(b=> b.classList.toggle('show', anyHidden)); }
+  function judgeOne(q, ua){ const norm=v=>(v??'').toString().trim().toLowerCase(); if(q.type==='choice'||q.type==='reading'){ return norm(ua) && norm(ua)===norm(q.answer);} if(Array.isArray(q.answer)) return q.answer.map(norm).includes(norm(ua)); if(typeof q.answer==='string') return norm(ua)===norm(q.answer); return false; }
+  function doCheck(){ if(!data?.items) return; let right=0,total=data.items.length; data.items.forEach((q,idx)=>{ const ua=userAns[idx]; const correct=judgeOne(q,ua); const block=list.children[idx]; const title=block.querySelector('h3'); const ans=block.querySelector('.ans'); ans.classList.add('show'); title.querySelector('.badge')?.remove(); const badge=document.createElement('span'); badge.className='badge '+(correct?'ok':'err'); badge.textContent=correct?'✓ 正确':'✗ 错误'; title.appendChild(badge);
+      // 给选择题的选中项上色
+      if(q.options?.length){ const ul=block.querySelector('ul'); if(ul){ const chosen = (userAns[idx]||'').toString().toUpperCase(); ul.querySelectorAll('.opt').forEach(li=>{ const v = (li.querySelector('input')?.value||'').toUpperCase(); li.classList.remove('good','bad'); if(v===chosen){ li.classList.add(correct? 'good':'bad'); } }); } }
+      if(correct) right++; }); score.textContent=`本次得分：${right} / ${total}（${Math.round(right/total*100)}分）`; }
+
+  function htmlForExport(includeAnswer=true){
+    const time=new Date().toLocaleString();
+    let html='<h2 style="margin:0 0 8px">译林版六年级英语 语法练习</h2>';
+    html += '<div style="font-size:12px;color:#666">导出时间：'+time+'</div>';
+    html += '<div style="font-size:12px;color:#666">模式：'+(mode==='tense'?'时态专项':'语法综合')+'</div>';
+    if(!data?.items?.length){
+      html += '<p>（尚未生成题目，此为占位导出。）</p>';
+      return html;
+    }
+    // 不使用 <ol> 避免 1,2,3… 序号；使用分隔线和项目块
+    data.items.forEach((q, idx)=>{
+      html += '<div style="margin:12px 0; padding:10px; border:1px solid #ddd; border-radius:10px">';
+      html += '<div><strong>'+q.stem+'</strong></div>';
+      if(q.options?.length){
+        html += '<ul style="margin:6px 0 0 18px; padding:0">';
+        q.options.forEach(o=>{ html += '<li style="margin:3px 0">'+o.text+'</li>'; });
+        html += '</ul>';
+      }
+      if(includeAnswer){
+        html += '<div style="margin-top:6px"><em>答案：</em> '+(Array.isArray(q.answer)? q.answer.join(' / ') : q.answer)+'</div>';
+        html += '<div style="margin-top:4px"><em>解析：</em> '+(q.explain||'').replaceAll('\\n','<br>')+'</div>';
+      } else {
+        html += '<div style="margin-top:8px;height:22px;border-bottom:1px solid #ccc;width:60%"></div>';
+      }
+      html += '</div>';
+    });
+    return html;
+  }
+
+  function exportWord(){
+    const withAns = confirm('导出 Word 时是否包含答案与解析？\n“确定”包含；“取消”只导出题目。');
+    const html = `
+      <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">
+      <head><meta charset="utf-8"><title>英语练习</title></head>
+      <body>${htmlForExport(withAns)}</body></html>`;
+    const blob = new Blob([html], { type: 'application/msword' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = '译林六年级英语练习.doc';
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); },0);
+    toast('已触发 Word 下载');
+  }
+
+  async function exportPdf(){
+    try{
+      const withAns = confirm('导出 PDF 时是否包含答案与解析？\n“确定”包含；“取消”只导出题目。');
+      // 简化 PDF 导出：将数字全部移除（我们本就不用 <ol>）
+      if(!window.jspdf){ toast('PDF 引擎未就绪，请稍后再试'); return; }
+      const { jsPDF } = window.jspdf;
+      const doc = new jsPDF({ unit:'pt', format:'a4' });
+      const pageWidth = doc.internal.pageSize.getWidth();
+      const margin = 40;
+      const maxWidth = pageWidth - margin*2;
+
+      const temp = document.createElement('div');
+      temp.style.visibility='hidden';
+      temp.style.position='fixed';
+      temp.style.left='-9999px';
+      temp.innerHTML = htmlForExport(withAns);
+      document.body.appendChild(temp);
+      const text = temp.innerText; // 已无数字序号
+      document.body.removeChild(temp);
+
+      const lines = doc.splitTextToSize(text, maxWidth);
+      let y = 50;
+      const lineHeight = 16;
+      lines.forEach(line => {
+        if(y > 780){ doc.addPage(); y = 50; }
+        doc.text(line, margin, y);
+        y += lineHeight;
+      });
+      doc.save('译林六年级英语练习.pdf');
+      toast('已触发 PDF 下载');
+    }catch(e){
+      toast('PDF 导出失败：'+e.message);
+      console.error(e);
+    }
+  }
+
+  async function gen(){
+    const count = Math.max(1, Math.min(20, +($('#count').value||10)));
+    const types = getTypes(); const level=$('#level').value; const focus=($('#focus').value||'').trim();
+    genBtn.disabled=true; genBtn.textContent='⏳ 正在出题…'; list.innerHTML='<div class="muted">正在生成题目，请稍候…</div>'; stat.textContent=''; userAns={}; score.textContent='';
+    try{
+      const paths=['/api/tutor','/.netlify/functions/tutor']; let ok=false,lastErr=null,res,txt;
+      for(const p of paths){
+        try{
+          res=await fetch(p,{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ count, types, level, focus, mode }) });
+          if(res.ok){ ok = true; break; }
+          txt = await res.text().catch(()=> ''); lastErr = new Error(`HTTP ${res.status} ${res.statusText}: ${txt}`);
+        }catch(e){ lastErr=e; }
+      }
+      if(!ok) throw lastErr || new Error('无法访问后端函数');
+      data = await res.json();
+      if(!data?.items || !Array.isArray(data.items)){ throw new Error('返回数据不是 items 数组，请检查后端提示。'); }
+      renderList(); toast('已生成题目');
+    }catch(err){ console.error(err); list.innerHTML = `<div style="color:#ffb4c0">出题失败：${err.message}</div>`; toast('出题失败：'+err.message); }
+    finally{ genBtn.disabled=false; genBtn.textContent='📝 一键出题'; }
+  }
+
+  $('#gen').addEventListener('click', gen);
+  $('#showAll').addEventListener('click', ()=>{ const blocks=list.querySelectorAll('.ans'); const anyHidden=Array.from(blocks).some(b=>!b.classList.contains('show')); blocks.forEach(b=> b.classList.toggle('show', anyHidden)); });
+  $('#check').addEventListener('click', ()=>{ if(!data?.items) return; let right=0,total=data.items.length; data.items.forEach((q,idx)=>{ const ua=userAns[idx]; const correct=(function(q,ua){ const n=v=>(v??'').toString().trim().toLowerCase(); if(q.type==='choice'||q.type==='reading'){ return n(ua) && n(ua)===n(q.answer);} if(Array.isArray(q.answer)) return q.answer.map(n).includes(n(ua)); if(typeof q.answer==='string') return n(ua)===n(q.answer); return false; })(q,ua); const block=list.children[idx]; const title=block.querySelector('h3'); const ans=block.querySelector('.ans'); ans.classList.add('show'); title.querySelector('.badge')?.remove(); const badge=document.createElement('span'); badge.className='badge '+(correct?'ok':'err'); badge.textContent=correct?'✓ 正确':'✗ 错误'; title.appendChild(badge);
+      // 给选择题的选中项上色
+      if(q.options?.length){ const ul=block.querySelector('ul'); if(ul){ const chosen = (userAns[idx]||'').toString().toUpperCase(); ul.querySelectorAll('.opt').forEach(li=>{ const v = (li.querySelector('input')?.value||'').toUpperCase(); li.classList.remove('good','bad'); if(v===chosen){ li.classList.add(correct? 'good':'bad'); } }); } }
+      if(correct) right++; }); score.textContent=`本次得分：${right} / ${total}（${Math.round(right/total*100)}分）`; });
+  $('#reset').addEventListener('click', ()=>{ userAns={}; score.textContent=''; if(data) renderList(); });
+  $('#exportDoc').addEventListener('click', exportWord);
+  $('#exportPdf').addEventListener('click', exportPdf);
+  // default mode
+  setMode('grammar');
+})();
+</script>
 </body>
 </html>
