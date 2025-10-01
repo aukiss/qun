@@ -1,7 +1,8 @@
 [build]
   functions = "netlify/functions"
+  publish = "."
 
 [[headers]]
-  for = "/*"
+  for = "/.netlify/functions/*"
   [headers.values]
     Cache-Control = "no-store"
