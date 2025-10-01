@@ -77,8 +77,8 @@ select{ height:42px; padding:0 10px; font-size:16px; border:1px solid var(--bord
 .options li.selected{ background:#eef2ff; border-color:#c7d2fe; }
 
 .answer{ display:none; border-top:1px dashed var(--border); margin-top:6px; padding-top:6px; }
-.answer pre{ white-space:pre-wrap; font-family:system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; font-size:18px; margin:0; line-height:1.5; }
-.answer .hint{ font-size:14px; color:#475569; }
+.answer pre{ white-space:pre-wrap; font-family:system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; font-size:16px; margin:0; line-height:1.5; }
+.answer .hint{ font-size:13px; color:#475569; }
 
 .ctrls-row{ display:flex; gap:8px; flex-wrap:wrap; margin-top:8px;}
 .ctrls-row .btn{ height:36px; font-size:15px; }

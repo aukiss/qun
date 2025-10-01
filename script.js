@@ -215,7 +215,7 @@ function renderQuestions(questions, opts={}){
   });
 
   // 底部批改条
-  gradingBar.style.display = opts.readonly ? 'none' : 'flex';
+  gradingBar.style.display = opts.readonly ? 'none' : 'flex'; updateStatsText();
   updateStatsText();
 }
 
@@ -270,7 +270,27 @@ gradeQuizBtn.addEventListener('click', ()=>{
     if (ok) correct++;
   });
   updateStatsText();
-  alert('批改完成：已统计成绩，并自动加入错题。');
+  
+  // 展开所有解析并在每题顶部显示 ✔/✖
+  currentData.forEach((q, idx)=>{
+    const card = questionsContainer.children[idx];
+    const ans = card.querySelector('.answer');
+    if (ans){ ans.style.display = 'block'; }
+    // 在 meta 左侧附加状态
+    const meta = card.querySelector('.meta');
+    let mark = meta.querySelector('.result-mark');
+    if (!mark){
+      mark = document.createElement('span');
+      mark.className = 'result-mark';
+      mark.style.marginRight = '8px';
+      meta.insertBefore(mark, meta.firstChild);
+    }
+    mark.textContent = (currentAnswers[idx] && currentAnswers[idx].correct) ? '✔' : '✖';
+  });
+  // 更新底部成绩文字
+  updateStatsText();
+  alert('批改完成：已显示正确/错误，并展开所有解析。');
+
 });
 
 // 生成题目
@@ -312,17 +332,21 @@ generateBtn.addEventListener('click', async () => {
   }
 });
 
-// 导出文件名：日期+试卷/解析+编号（自动轮换 A/B/C/D）
+
+// Filename numbering per day
 function todayStr(){
   const d = new Date();
   const pad = n=> String(n).padStart(2,'0');
   return `${d.getFullYear()}${pad(d.getMonth()+1)}${pad(d.getDate())}`;
 }
-function makeFileName(isSolutions=false, isWrongbook=false){
+function getSeqKey(){ return `paper_seq_${todayStr()}`; }
+function getCurrentSeq(){ return parseInt(localStorage.getItem(getSeqKey())||'0',10) || 0; }
+function incSeq(){ const n = getCurrentSeq()+1; localStorage.setItem(getSeqKey(), String(n)); return n; }
+function makeFileName(isSolutions=false, isWrongbook=false, forcedSeq=null){
   const date = todayStr();
   if (isWrongbook) return `${date}-错题本`;
-  const code = nextPaperCode();
-  return isSolutions ? `${date}-解析-${code}` : `${date}-试卷-${code}`;
+  const seq = forcedSeq ?? (isSolutions ? (getCurrentSeq() || 1) : incSeq());
+  return isSolutions ? `${date}-解析-${seq}` : `${date}-试卷-${seq}`;
 }
 let _origTitle = document.title;
 function preparePrint(mode, filename){
@@ -331,9 +355,7 @@ function preparePrint(mode, filename){
   _origTitle = document.title;
   document.title = filename;
 }
-function restoreTitle(){
-  document.title = _origTitle;
-}
+function restoreTitle(){ document.title = _origTitle; }
 
 exportPaperBtn.addEventListener('click', () => {
   const name = makeFileName(false,false);
@@ -342,6 +364,21 @@ exportPaperBtn.addEventListener('click', () => {
   restoreTitle();
 });
 exportPaperSolBtn.addEventListener('click', () => {
+  const name = makeFileName(true,false);
+  preparePrint('paper_solutions', name);
+  window.print();
+  restoreTitle();
+});
+exportWrongPdfBtn.addEventListener('click', ()=>{
+  showWrongBook();
+  setTimeout(()=>{
+    const name = makeFileName(true, true, null);
+    preparePrint('paper_solutions', name);
+    window.print();
+    restoreTitle();
+  }, 50);
+});
+('click', () => {
   const name = makeFileName(true,false);
   preparePrint('paper_solutions', name);
   window.print();

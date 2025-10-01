@@ -63,7 +63,7 @@ async function callUpstream({ BASE, KEY, MODEL, questionType, form, subtype, cou
   const schema = `输出严格 JSON 数组（不要 markdown 代码块）。数组长度为 ${count}。每个元素：
 {
   "question_type": "mcq|short",
-  "question": "中文引导 + 英文题干，填空用 (   ) 表示空格",
+  "question": "Question text in ENGLISH only. Use (   ) for blanks. No Chinese translation or Chinese hints in question.",
   "options": ["A) ...","B) ...","C) ...","D) ..."], // 仅当 question_type=mcq 时需要；short 时给 []
   "answer_letter": "A|B|C|D",                        // mcq 时需要
   "answer_text": "正确答案文本（short 的答案；mcq 也请给出对应选项文本）",
@@ -75,7 +75,7 @@ ${formHint}
 ${subtypeHint}
 ${schema}
 要求：
-- 题干简洁，生活化场景；
+- 题干简洁、仅英文（不要出现中文翻译或中文提示），生活化场景；
 - 简答题的答案尽量短（1~6个词或一句常见短句），避免歧义；
 - 选项严格 4 个，且显式带字母 A) B) C) D)；
 - 解析语气温和，先鼓励，再指出要点。`;
