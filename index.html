@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>六年级英语出题器 · 语法与时态</title>
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+  <main class="container">
+    <header class="hero">
+      <h1>🎓 六年级英语出题器</h1>
+      <p class="sub">一键生成 · 语法 / 时态 · 适合小学生</p>
+    </header>
+
+    <section class="controls card">
+      <div class="row">
+        <label class="field">
+          <span>题量</span>
+          <select id="questionCount">
+            <option value="10" selected>10 题</option>
+            <option value="15">15 题</option>
+            <option value="20">20 题</option>
+          </select>
+        </label>
+
+        <div class="field buttons-col">
+          <span>题型</span>
+          <div class="btn-group">
+            <button id="btnGrammar" class="btn pill primary">📘 语法</button>
+            <button id="btnTenses" class="btn pill accent">⏰ 时态</button>
+          </div>
+        </div>
+
+        <div class="field">
+          <span>导出选项</span>
+          <div class="radio-row">
+            <label><input type="radio" name="exportMode" value="paper" checked /> 纯试卷</label>
+            <label><input type="radio" name="exportMode" value="paper_solutions" /> 试卷 + 解析</label>
+          </div>
+        </div>
+      </div>
+
+      <div class="row">
+        <div class="btn-group">
+          <button id="generateBtn" class="btn solid large">🪄 生成题目</button>
+          <button id="exportPdfBtn" class="btn outline large" disabled>🖨️ 导出 PDF</button>
+        </div>
+      </div>
+
+      <p class="tip">提示：导出为 PDF 后，手动在微信中发送给学生或家长。</p>
+    </section>
+
+    <section id="questionsContainer" class="questions">
+      <p class="muted">先选择题量与题型，再点击“生成题目”。</p>
+    </section>
+  </main>
+
+  <footer class="foot muted">
+    <p>为小学生设计：按钮大、字清晰、信息分层。</p>
+  </footer>
+
+  <script src="./script.js"></script>
+</body>
+</html>
