@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0"/>
+  <title>六年级英语出题器 · 语法与时态</title>
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+  <main class="container">
+    <header class="hero">
+      <h1>🎓 六年级英语出题器</h1>
+      <p class="sub">@凉风有信开发 提建议微信wuliaotop</p>
+    </header>
+
+    <section class="controls card">
+      <div class="grid">
+        <label class="field">
+          <span>题量</span>
+          <select id="questionCount">
+            <option value="10" selected>10 题</option>
+            <option value="15">15 题</option>
+            <option value="20">20 题</option>
+          </select>
+        </label>
+
+        <label class="field">
+          <span>难度</span>
+          <select id="difficulty">
+            <option value="basic" selected>基础</option>
+            <option value="intermediate">提高</option>
+            <option value="challenge">挑战</option>
+          </select>
+        </label>
+
+        <label class="field">
+          <span>知识点（可选）</span>
+          <select id="topic">
+            <option value="">不限</option>
+            <option value="subject-verb agreement">主谓一致</option>
+            <option value="pronouns">代词</option>
+            <option value="prepositions">介词</option>
+            <option value="articles">冠词</option>
+            <option value="comparatives">比较级入门</option>
+            <option value="present simple">一般现在时</option>
+            <option value="past simple">一般过去时</option>
+            <option value="present continuous">现在进行时</option>
+            <option value="future simple">一般将来时</option>
+          </select>
+        </label>
+
+        <label class="field">
+          <span>题型选择</span>
+          <select id="formType">
+            <option value="mixed" selected>混合</option>
+            <option value="mcq">选择题</option>
+            <option value="short-correct">改错题</option>
+            <option value="short-transform">句型转换</option>
+            <option value="short-reorder">连词成句</option>
+          </select>
+        </label>
+      </div>
+
+      <div class="toolbar">
+        <div class="btn-row">
+          <button id="btnGrammar" class="btn pill toggle on">📘 语法</button>
+          <button id="btnTenses" class="btn pill toggle">⏰ 时态</button>
+          <button id="generateBtn" class="btn primary large">🪄 一键生成</button>
+        </div>
+        <div class="btn-row">
+          <button id="exportPaperBtn" class="btn outline">🖨️ 导出试卷</button>
+        <button id="showAllExplainBtn" class="btn secondary">显示全部解析</button>
+          <button id="exportPaperSolBtn" class="btn outline">🖨️ 导出试卷+解析</button>
+        <button id="showAllExplainBtn" class="btn secondary">显示全部解析</button>
+        </div>
+        <div class="btn-row">
+          <button id="viewWrongBtn" class="btn ghost">📚 查看错题本</button>
+          <button id="exportWrongPdfBtn" class="btn ghost">🖨️ 错题本PDF</button>
+          <button id="clearWrongBtn" class="btn ghost subtle">🗑️ 清空错题本</button>
+        </div>
+      </div>
+    </section>
+
+    <section id="questionsContainer" class="questions">
+      <p class="muted">选择条件后，点“🪄 一键生成”。</p>
+    </section>
+
+    <section class="grading-bar" id="gradingBar" style="display:none;">
+      <div id="statText" class="muted small"></div>
+      <button id="gradeQuizBtn" class="btn primary">✅ 在线批改</button>
+    </section>
+  </main>
+
+  <script src="./script.js"></script>
+</body>
+</html>
