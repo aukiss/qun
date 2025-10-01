@@ -418,3 +418,34 @@ document.addEventListener('click', (e) => {
     toggleAllExplanations();
   }
 });
+
+
+function escapeHtml(str){
+  return String(str||'')
+    .replace(/&/g,'&amp;')
+    .replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;')
+    .replace(/'/g,'&#39;');
+}
+function renderExplanation(ex){
+  const text = String(ex||'').replace(/\r/g,'');
+  const refMatch = text.match(/参考答案[:：]\s*([^\n]+)/);
+  let stepsBlock = '';
+  const sp = text.split(/分步讲解[:：]/);
+  if (sp.length > 1){
+    stepsBlock = sp[1].split(/提示[:：]/)[0] || '';
+  }
+  const hintMatch = text.match(/提示[:：]\s*([\s\S]*)$/);
+  const steps = stepsBlock.split(/\n+/).map(s=>s.trim()).filter(Boolean).map(s=>s.replace(/^\d+\)\s*/,''));
+  let html = '<div class="exp">';
+  if (refMatch){ html += `<div class="exp-ref"><b>参考答案：</b> ${escapeHtml(refMatch[1].trim())}</div>`; }
+  if (steps.length){
+    html += '<div class="exp-steps"><b>分步讲解：</b><ol>';
+    html += steps.map(s=>`<li>${escapeHtml(s)}</li>`).join('');
+    html += '</ol></div>';
+  }
+  if (hintMatch){ html += `<div class="exp-hint"><b>提示：</b> ${escapeHtml(hintMatch[1].trim())}</div>`; }
+  html += '</div>';
+  return html;
+}

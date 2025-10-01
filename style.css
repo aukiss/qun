@@ -107,3 +107,7 @@ select{ height:42px; padding:0 10px; font-size:16px; border:1px solid var(--bord
   body.paper .answer{ display:none !important; }
   body.paper_solutions .answer{ display:block !important; }
 }
+
+.exp-steps ol{margin:6px 0 0 20px;padding:0}
+.exp-steps li{margin:2px 0}
+.exp-ref,.exp-hint{margin-top:6px}
