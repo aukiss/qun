@@ -1,9 +1,9 @@
 
 // netlify/functions/generate.js
-// v9 + user prompt (v3.2 final):
-// - question: ONLY English sentence/material (strip any "【操作】..." CN prefix)
-// - always provide explanation; subtype-aware heuristics
-// - keep v9 UI schema; batched to avoid 504
+// v9 + user prompt (v3.4-fix):
+// - question: CN instruction (by subtype) + EN material (two lines)
+// - response: ONLY six fields required by v9 UI
+// - always provide explanation (fallback); batched to avoid 504
 
 const TIMEOUT_MS = parseInt(process.env.TIMEOUT_MS || '22000', 10);
 const BATCH_SIZE = parseInt(process.env.BATCH_SIZE || '4', 10);
@@ -46,7 +46,9 @@ function buildSystemPrompt({ mode, count, types, level="normal", focus="" }){
 - hard：选择更易混点、加干扰项
 【格式】只输出 JSON（面向学生的操作提示用中文，例如“把下列句子改为否定句/一般疑问句/选择正确形式”；英语例句本身保持英文）`;
 
-  const details = `题干：仅英文材料/句子（不得包含中文；填空用 (   ) 表示空）。
+  const details = `题干两行：
+- 第 1 行：中文操作指令（根据题型自动选择用语）。
+- 第 2 行：英文题目/材料（不得包含中文翻译；填空用 (   ) 表示空）。
 解析模板："参考答案：...\\n分步讲解：\\n1) 先看时间状语…\\n2) 主语是三单…\\n3) 规则/不规则变化…\\n举例：This/That…\\n提示：一句话提醒"
 【出题参数】
 - 模式: ${mode}（grammar=语法综合；tense=时态专项，仅围绕一般现在/一般过去/现在进行混合）
@@ -55,7 +57,7 @@ function buildSystemPrompt({ mode, count, types, level="normal", focus="" }){
 - 难度: ${level}
 - 知识点优先: "${focus || '无'}"
 【约束】
-- 操作指令不需要放入题干（不要输出“【操作】...”）；题干只保留英文。
+- 操作指令必须中文；题干英文不含中文翻译。
 - 模式为 tense 时：每题都聚焦三类时态，解析强调“看时间状语→判时态→动词形式/句型转换”。
 - 严格可判分：选择题 answer 用 "A/B/C/D"；填空给出唯一或可接受数组；改错题提供“错因+正确句子”。
 - 题干简洁，贴六年级生活语境（上学、课余、家庭、校园活动）。
@@ -64,8 +66,8 @@ function buildSystemPrompt({ mode, count, types, level="normal", focus="" }){
   const schema = `请严格只输出 **JSON 数组**（不要 markdown 代码块）。数组长度为 N（${count}）。每个元素对象必须包含：
 {
   "question_type": "mcq|short",
-  "subtype": "choice|error|transform|fill|rearrange|null",  // 可选
-  "question": "英文题目/材料（空用 (   ) ）",
+  "subtype": "choice|error|transform|fill|rearrange|null",  // 可选，便于确定中文操作指令；最终响应不返回此字段
+  "question": "题干（可以是一行英文；也可以两行：第1行中文指令 + 第2行英文材料；空用 (   ) ）",
   "options": ["A) ...","B) ...","C) ...","D) ..."], // 仅 question_type 为 mcq 时需要
   "answer_letter": "A|B|C|D",                       // 仅 mcq
   "answer_text": "正确答案文本（short 题；若有多个可接受写法，用 ' / ' 连接；mcq 也补充正确项文本）",
@@ -141,27 +143,7 @@ function detectSubject(line){
   }
   return '';
 }
-
-function subtypeToCN(subtype, qt){
-  const map = {
-    choice: '【操作】选择正确形式：',
-    error: '【操作】把句子改成正确形式：',
-    transform: '【操作】按要求改写句子：',
-    rearrange: '【操作】把词语连成句子：',
-    fill: '【操作】在空格内填入正确形式：'
-  };
-  if (qt === 'mcq') return map.choice;
-  return map[subtype] || '【操作】按要求作答：';
-}
-function buildBilingualQuestion(qt, raw, subtype){
-  const q = String(raw||'').replace(/(?:参考答案|答案)\s*[:：].*$/i,'').trim();
-  const lines = q.split(/\n+/).map(s=>s.trim()).filter(Boolean);
-  const en = (lines.find(l=>/[A-Za-z]/.test(l)) || q || 'Write the correct form.').trim();
-  const cn = subtypeToCN(subtype, qt);
-  return { display: `${cn}\n${en}`, en };
-}
-
-function buildHeuristicSteps(qt, enLine, options, answer_letter, answer_text, subtype){
+function buildHeuristicSteps(qt, enLine, options, answer_letter, answer_text, subtypeHint){
   const steps = [];
   if (qt === 'mcq'){
     const tense = detectTense(enLine);
@@ -182,21 +164,21 @@ function buildHeuristicSteps(qt, enLine, options, answer_letter, answer_text, su
     steps.push(`举例：${example}`);
     return steps.join('\n');
   }
-  if (subtype === 'error'){
+  if (subtypeHint === 'error'){
     steps.push('1) 找出句中错误（时态、主谓一致、拼写/大小写等）。');
     steps.push('2) 按规则改正，保留原意与语序。');
     steps.push('3) 检查首字母大小写与句号。');
     if (answer_text) steps.push(`举例：${/[.!?]$/.test(answer_text)?answer_text:(answer_text+'.')}`);
     return steps.join('\n');
   }
-  if (subtype === 'transform'){
+  if (subtypeHint === 'transform'){
     steps.push('1) 明确目标句型（一般疑问句/否定句/祈使句等）。');
     steps.push('2) 根据主语与时态选择助动词与动词形式。');
     steps.push('3) 注意语序与标点（问号/句号）。');
     if (answer_text) steps.push(`举例：${/[!?]$/.test(answer_text)?answer_text:(answer_text+'?')}`);
     return steps.join('\n');
   }
-  if (subtype === 'rearrange'){
+  if (subtypeHint === 'rearrange'){
     steps.push('1) 先找主语和谓语，再放时间/地点等。');
     steps.push('2) 注意首字母大写与句末标点。');
     steps.push('3) 检查词序是否符合英文表达习惯。');
@@ -210,23 +192,42 @@ function buildHeuristicSteps(qt, enLine, options, answer_letter, answer_text, su
   return steps.join('\n');
 }
 
-function buildExplanation(item, qt, options, answer_letter, answer_text, enLine, subtype){
+function subtypeToCN(subtypeHint, qt){
+  const map = {
+    choice: '【操作】选择正确形式：',
+    error: '【操作】把句子改成正确形式：',
+    transform: '【操作】按要求改写句子：',
+    rearrange: '【操作】把词语连成句子：',
+    fill: '【操作】在空格内填入正确形式：'
+  };
+  if (qt === 'mcq') return map.choice;
+  return map[subtypeHint] || '【操作】按要求作答：';
+}
+function buildBilingualQuestion(qt, raw, subtypeHint){
+  const q = String(raw||'').replace(/(?:参考答案|答案)\s*[:：].*$/i,'').trim();
+  const lines = q.split(/\n+/).map(s=>s.trim()).filter(Boolean);
+  const en = (lines.find(l=>/[A-Za-z]/.test(l)) || q || 'Write the correct form.').trim();
+  const cn = subtypeToCN(subtypeHint, qt);
+  return { display: `${cn}\n${en}`, en };
+}
+
+function buildExplanation(item, qt, options, answer_letter, answer_text, enLine, subtypeHint){
   let ex = String(item.answer_explanation || '').trim();
   const hasSteps = /分步讲解/.test(ex);
   const hasRef = /参考答案|正确答案/.test(ex);
   if (!ex || !(hasSteps && hasRef)){
     const ref = qt==='mcq' ? `参考答案：${answer_letter}` : `参考答案：${answer_text||''}`;
-    const steps = String(item.explain || '').trim() || buildHeuristicSteps(qt, enLine, options, answer_letter, answer_text, subtype);
+    const steps = String(item.explain || '').trim() || buildHeuristicSteps(qt, enLine, options, answer_letter, answer_text, subtypeHint);
     const hint = String(item.hint || '').trim() || '先看时间词，再判断时态与主谓一致。';
     ex = `${ref}\n分步讲解：\n${steps}\n提示：${hint}`;
   }
   return ex.slice(0, 2000);
 }
 
-// ---- map to v9 schema ----
+// ---- map to v9 schema (ONLY six fields) ----
 function toV9Schema(item){
   const qt = String(item.question_type || '').toLowerCase() === 'short' ? 'short' : 'mcq';
-  const subtype = String(item.subtype || '').toLowerCase() || (qt==='mcq'?'choice':'');
+  const subtypeHint = String(item.subtype || '').toLowerCase() || (qt==='mcq'?'choice':'');
   const rawQ = item.question ?? '';
   const options = Array.isArray(item.options) ? ensureABCD(item.options) : [];
   let answer_letter = qt==='mcq' ? toMcqLetter(item.answer_letter) : '';
@@ -236,9 +237,8 @@ function toV9Schema(item){
     answer_text = options[idx]?.replace(/^\s*[A-D]\)\s*/,'') || '';
   }
 
-  const subtype = String(item.subtype || '').toLowerCase() || (qt==='mcq'?'choice':'');
-  const { display, en } = buildBilingualQuestion(qt, rawQ, subtype);
-  const answer_explanation = buildExplanation(item, qt, options, answer_letter, answer_text, en, subtype);
+  const { display, en } = buildBilingualQuestion(qt, rawQ, subtypeHint);
+  const answer_explanation = buildExplanation(item, qt, options, answer_letter, answer_text, en, subtypeHint);
   return {
     question_type: qt,
     question: display.slice(0, 600),
@@ -271,7 +271,7 @@ exports.handler = async (event) => {
     const body = JSON.parse(event.body || '{}');
     const questionType = body.questionType || 'grammar'; // grammar | tenses
     const form = body.form || 'mixed'; // mcq | short | mixed
-    const subtype = body.subtype || ''; // short-correct|short-transform|short-reorder
+    const formSubtype = body.subtype || ''; // short-correct|short-transform|short-reorder
     const total = Math.min(Math.max(parseInt(body.questionCount || 10, 10), 1), 40);
 
     const BASE = process.env.OPENAI_BASE_URL;
@@ -281,7 +281,7 @@ exports.handler = async (event) => {
       return { statusCode: 500, body: JSON.stringify({ error: 'Server not configured: missing OPENAI_BASE_URL or OPENAI_API_KEY' }) };
     }
 
-    const types = mapTypes(form, subtype);
+    const types = mapTypes(form, formSubtype);
     const mode = (questionType === 'tenses') ? 'tense' : 'grammar';
     const level = process.env.CUSTOM_LEVEL || 'normal';
     const focus = process.env.CUSTOM_FOCUS || '';
