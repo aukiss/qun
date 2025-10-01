@@ -1,15 +1,9 @@
 
 // netlify/functions/generate.js
-// v9 + user custom prompt (小学六年级 · 译林版) — keep v9 UI schema
-// Returns an ARRAY of questions (not wrapped), fields:
-//  - question_type: 'mcq' | 'short'
-//  - question: string
-//  - options: ["A) ...","B) ...","C) ...","D) ..."]  // mcq only
-//  - answer_letter: 'A'|'B'|'C'|'D'                  // mcq
-//  - answer_text: string                              // short；mcq 也给文本
-//  - answer_explanation: string ("参考答案" + "分步讲解" + "提示")
-//
-// Batched generation to reduce 504 timeouts.
+// v9 + user prompt (v2): 
+// - Question stem = Chinese instruction (line1) + English content (line2)
+// - Guarantee answer_explanation (fallback build from explain/hint/answer)
+// - Keep v9 UI schema; batched to avoid 504
 
 const TIMEOUT_MS = parseInt(process.env.TIMEOUT_MS || '22000', 10);
 const BATCH_SIZE = parseInt(process.env.BATCH_SIZE || '4', 10);
@@ -31,7 +25,6 @@ function toMcqLetter(v){
   return ['A','B','C','D'].includes(x) ? x : 'A';
 }
 
-// Map front-end form/subtype -> logical types (for prompt only)
 function mapTypes(form, subtype){
   if (form === "mcq") return ["choice"];
   if (form === "short"){
@@ -43,7 +36,7 @@ function mapTypes(form, subtype){
   return ["choice","error","transform","fill","rearrange"];
 }
 
-// ===== User-provided system prompt (hardcoded) =====
+// ===== System prompt (hardcoded, per user) =====
 function buildSystemPrompt({ mode, count, types, level="normal", focus="" }){
   const header = `你是一名小学英语教研员，熟悉“译林版”六年级下/上册语法要求。请根据参数生成题库，并严格输出 JSON（不要多余文字）。
 【目标】生成适合六年级学生的题目，覆盖：时态（一般现在/过去/进行）、主谓一致、代词（物主/反身）、形容词/副词比较级与最高级、句型转换、连词成句、短文语法选择。讲解要口语化、分步骤、举例子，解释为什么错。
@@ -53,7 +46,9 @@ function buildSystemPrompt({ mode, count, types, level="normal", focus="" }){
 - hard：选择更易混点、加干扰项
 【格式】只输出 JSON（面向学生的操作提示用中文，例如“把下列句子改为否定句/一般疑问句/选择正确形式”；英语例句本身保持英文）`;
 
-  const details = `2.题干（中文或英文+必要上下文）
+  const details = `2.题干必须两行：
+- 第 1 行：中文操作指令（如：【操作】把句子改为一般疑问句 / 选择正确形式 / 连词成句 等）。
+- 第 2 行：英文题目/材料（不得包含中文翻译；填空用 (   ) 表示空）。
 3."分步讲解：\\n1) 先看时间状语…\\n2) 主语是三单…\\n3) 规则/不规则变化…\\n举例：This/That…"
 4.【出题参数】
 - 模式: ${mode}（grammar=语法综合；tense=时态专项，仅围绕一般现在/一般过去/现在进行混合）
@@ -68,11 +63,10 @@ function buildSystemPrompt({ mode, count, types, level="normal", focus="" }){
 - 题干简洁，贴六年级生活语境（上学、课余、家庭、校园活动）。
 - 解析要让“做错的孩子也能看懂”，避免术语堆砌，强调“如何快速判断”。`;
 
-  // Schema hard constraint (v9 UI expects these exact fields)
   const schema = `请严格只输出 **JSON 数组**（不要 markdown 代码块）。数组长度为 N（${count}）。每个元素对象必须包含：
 {
   "question_type": "mcq|short",
-  "question": "题干（中文或英文+必要上下文；如需填空，用 (   ) 表示空）",
+  "question": "两行：第1行中文操作指令；第2行英文题目/材料（空用 (   ) ）",
   "options": ["A) ...","B) ...","C) ...","D) ..."], // 仅 question_type 为 mcq 时需要
   "answer_letter": "A|B|C|D",                       // 仅 mcq
   "answer_text": "正确答案文本（short 题；若有多个可接受写法，用 ' / ' 连接；mcq 也补充正确项文本）",
@@ -98,7 +92,7 @@ async function callLLM({ BASE, KEY, MODEL, systemContent, userContent, count }){
       body: JSON.stringify({
         model: MODEL || 'gpt-4o-mini',
         temperature: 0.45,
-        max_tokens: 1150,
+        max_tokens: 1200,
         messages: [
           { role: 'system', content: systemContent },
           { role: 'user', content: userContent }
@@ -128,10 +122,37 @@ async function callLLM({ BASE, KEY, MODEL, systemContent, userContent, count }){
   }
 }
 
+// ===== Helpers for question/explanation fallbacks =====
+function ensureBilingualQuestion(qt, question){
+  const q = String(question||'').replace(/(?:参考答案|答案)\s*[:：].*$/i,'').trim();
+  const hasCJK = /[\u4e00-\u9fff]/.test(q);
+  const lines = q.split(/\n+/).map(s=>s.trim()).filter(Boolean);
+  if (hasCJK && lines.length >= 2) return lines[0] + '\n' + lines.slice(1).join(' ');
+  // Build a Chinese instruction + pick an English line
+  let cn = '【操作】按要求作答：';
+  if (qt === 'mcq') cn = '【操作】选择正确答案：';
+  const en = (lines.find(l=>/[A-Za-z]/.test(l)) || q || 'Write the correct form.').replace(/(?:参考答案|答案)\s*[:：].*$/i,'').trim();
+  return `${cn}\n${en}`;
+}
+function buildExplanation(item, qt, options, answer_letter, answer_text){
+  let ex = String(item.answer_explanation || '').trim();
+  const hasSteps = /分步讲解/.test(ex);
+  const hasRef = /参考答案|正确答案/.test(ex);
+  if (!ex || !(hasSteps && hasRef)){
+    const ref = qt==='mcq' ? `参考答案：${answer_letter}` : `参考答案：${answer_text||''}`;
+    const steps = String(item.explain || '').trim();
+    const hint = String(item.hint || '').trim();
+    ex = ref + (steps ? `\n分步讲解：\n${steps}` : '') + (hint ? `\n提示：${hint}` : '');
+    ex = ex.trim();
+  }
+  return ex.slice(0, 2000);
+}
+
 // ===== Sanitization to v9 schema =====
 function toV9Schema(item){
   const qt = String(item.question_type || '').toLowerCase() === 'short' ? 'short' : 'mcq';
-  const question = String(item.question || '').replace(/(?:参考答案|答案)\s*[:：].*$/i,'').slice(0, 600);
+  const questionRaw = item.question ?? '';
+  const question = ensureBilingualQuestion(qt, questionRaw).slice(0, 600);
   const options = Array.isArray(item.options) ? ensureABCD(item.options) : [];
   let answer_letter = qt==='mcq' ? toMcqLetter(item.answer_letter) : '';
   let answer_text = String(item.answer_text || '').slice(0, 400);
@@ -139,8 +160,8 @@ function toV9Schema(item){
     const idx = {A:0,B:1,C:2,D:3}[answer_letter] ?? 0;
     answer_text = options[idx]?.replace(/^\s*[A-D]\)\s*/,'') || '';
   }
-  const ex = String(item.answer_explanation || '').slice(0, 1800);
-  return { question_type: qt, question, options, answer_letter, answer_text, answer_explanation: ex };
+  const answer_explanation = buildExplanation(item, qt, options, answer_letter, answer_text);
+  return { question_type: qt, question, options, answer_letter, answer_text, answer_explanation };
 }
 
 // Simple concurrency limit
