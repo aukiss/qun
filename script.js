@@ -8,14 +8,9 @@ const btnGrammar = qs('#btnGrammar');
 const btnTenses = qs('#btnTenses');
 const exportPaperBtn = qs('#exportPaperBtn');
 const exportPaperSolBtn = qs('#exportPaperSolBtn');
-const startQuizBtn = qs('#startQuizBtn');
 const gradeQuizBtn = qs('#gradeQuizBtn');
-const resetBtn = qs('#resetBtn');
-
-const statBar = qs('#statsBar');
-const statAcc = qs('#statAcc');
-const statCount = qs('#statCount');
-const statTopics = qs('#statTopics');
+const gradingBar = qs('#gradingBar');
+const statText = qs('#statText');
 
 const viewWrongBtn = qs('#viewWrongBtn');
 const exportWrongPdfBtn = qs('#exportWrongPdfBtn');
@@ -24,36 +19,41 @@ const clearWrongBtn = qs('#clearWrongBtn');
 let currentType = 'grammar'; // grammar | tenses
 let currentData = [];
 let currentAnswers = []; // {index, choose, correct, answer, student_text?}
-let quizMode = false; // 在线做题模式
+let quizMode = true; // 默认允许作答（取消了在线做题按钮）
+const WRONG_KEY = 'english_quiz_wrongbook_v4';
 
-const WRONG_KEY = 'english_quiz_wrongbook_v3';
+// Paper code rotate A->B->C->D for filenames
+const CODE_KEY = 'english_quiz_paper_code';
+function nextPaperCode(){
+  const seq = ['A','B','C','D'];
+  let cur = localStorage.getItem(CODE_KEY) || 'A';
+  const idx = (seq.indexOf(cur)+1) % seq.length;
+  const next = seq[idx];
+  localStorage.setItem(CODE_KEY, next);
+  return cur;
+}
 
 btnGrammar.addEventListener('click', ()=>{
   currentType = 'grammar';
-  btnGrammar.classList.add('primary');
-  btnTenses.classList.remove('primary');
+  btnGrammar.classList.add('on');
+  btnTenses.classList.remove('on');
 });
 btnTenses.addEventListener('click', ()=>{
   currentType = 'tenses';
-  btnTenses.classList.add('primary');
-  btnGrammar.classList.remove('primary');
+  btnTenses.classList.add('on');
+  btnGrammar.classList.remove('on');
 });
 
-/** 仅保留：参考答案 + 分步讲解 + 提示（提示小字）。 */
+/** 只保留 参考答案 + 分步讲解 + 提示 */
 function slimExplanation(answerLetter, answerText, explanation) {
   const exp = String(explanation || '');
-  // 去头部的“参考答案/正确答案”
   const body = exp
     .replace(/^.*?(参考答案|正确答案)\s*[:：].*$/m, '')
     .replace(/^\s*(解题思路|思路|温馨鼓励|小贴士)\s*[:：].*$/gmi, '')
     .trim();
-
-  // 提取“分步讲解”块
   let steps = '';
   const stepsMatch = body.match(/分步讲解\s*[:：]?([\s\S]*?)(?=\n\S|$)/m);
   if (stepsMatch) steps = stepsMatch[1].trim();
-
-  // 提取“提示”块
   let hint = '';
   const hintMatch = body.match(/提示\s*[:：]?([\s\S]*?)(?=\n\S|$)/m);
   if (hintMatch) hint = hintMatch[1].trim();
@@ -61,7 +61,6 @@ function slimExplanation(answerLetter, answerText, explanation) {
   let text = `参考答案： ${answerLetter || answerText}`.trim();
   if (steps) text += `\n分步讲解：\n${steps.trim()}`;
   if (hint)  text += `\n提示：<span class="hint">${hint.trim()}</span>`;
-
   return text;
 }
 
@@ -95,19 +94,6 @@ function lenientMatch(student, correct){
   return inter.size >= Math.ceil(tSet.size * 0.7);
 }
 
-function renderStats() {
-  const total = currentAnswers.length;
-  if (!total) { statBar.style.display='none'; return; }
-  const correct = currentAnswers.filter(a=>a && a.correct).length;
-  const acc = Math.round((correct/total)*100);
-  statBar.style.display='flex';
-  statAcc.textContent = `${acc}% 正确率`;
-  statCount.textContent = `共 ${total} 题，其中正确 ${correct} 题`;
-
-  const tp = qs('#topic')?.value || (currentType==='tenses'?'时态':'语法');
-  statTopics.textContent = `知识点：${tp}`;
-}
-
 function saveWrong(item) {
   const book = JSON.parse(localStorage.getItem(WRONG_KEY) || '[]');
   book.push(item);
@@ -120,22 +106,21 @@ function showWrongBook() {
     questionsContainer.innerHTML = '<p class="muted">暂时没有错题～</p>';
     exportPaperBtn.disabled = true;
     exportPaperSolBtn.disabled = true;
+    gradingBar.style.display = 'none';
     return;
   }
   renderQuestions(book, {readonly:true, titlePrefix:'【错题】'});
-  exportPaperBtn.disabled = false;
-  exportPaperSolBtn.disabled = false;
+  gradingBar.style.display = 'none'; // 错题本不需要批改
 }
 
-viewWrongBtn?.addEventListener('click', showWrongBook);
-clearWrongBtn?.addEventListener('click', ()=>{
+viewWrongBtn.addEventListener('click', showWrongBook);
+clearWrongBtn.addEventListener('click', ()=>{
   if (confirm('确定要清空本设备的错题本吗？')){
     localStorage.removeItem(WRONG_KEY);
     showWrongBook();
   }
 });
-
-exportWrongPdfBtn?.addEventListener('click', ()=>{
+exportWrongPdfBtn.addEventListener('click', ()=>{
   showWrongBook();
   setTimeout(()=>{
     preparePrint('paper_solutions', makeFileName(true, true));
@@ -183,7 +168,9 @@ function renderQuestions(questions, opts={}){
         li.classList.add('touch');
         if (!readonly){
           li.addEventListener('click', ()=>{
-            if(!quizMode) return; // 做题时不着色、不提示正误
+            // 可以选择（修复不可选）：记录选择并高亮选中（不提示正误）
+            qsa('li', optList).forEach(x=>x.classList.remove('selected'));
+            li.classList.add('selected');
             currentAnswers[idx] = {index: idx, choose: String.fromCharCode(65+i), correct: false, answer: q.answer_letter||'A'};
           });
         }
@@ -193,14 +180,13 @@ function renderQuestions(questions, opts={}){
     } else {
       const input = document.createElement('input');
       input.type = 'text';
-      input.placeholder = ''; // 取消占位提示
+      input.placeholder = ''; // 不显示提示
       Object.assign(input.style, {
         width:'100%', height:'42px', fontSize:'18px', padding:'6px 10px',
         border:'1px solid #e5e7eb', borderRadius:'10px'
       });
       if (!readonly){
         input.addEventListener('change', ()=>{
-          if (!quizMode) return;
           currentAnswers[idx] = {index: idx, choose: input.value, correct: false, answer: q.answer_text||'', student_text: input.value};
         });
       }
@@ -223,32 +209,27 @@ function renderQuestions(questions, opts={}){
       toggle.textContent = isShow ? '显示解析' : '隐藏解析';
     });
 
-    const badge = document.createElement('span');
-    badge.className = 'badge';
-    badge.style.display = 'none';
-    badge.textContent = '未批改';
-
-    ctrls.appendChild(badge);
-    ctrls.appendChild(toggle);
-
-    card.appendChild(ctrls);
+    card.appendChild(ctrlls);
     card.appendChild(ans);
     questionsContainer.appendChild(card);
   });
 
-  exportPaperBtn.disabled = false;
-  exportPaperSolBtn.disabled = false;
-  renderStats();
+  // 底部批改条
+  gradingBar.style.display = opts.readonly ? 'none' : 'flex';
+  updateStatsText();
 }
 
-// 在线做题 / 批改 / 重置
-startQuizBtn?.addEventListener('click', ()=>{
-  quizMode = true;
-  alert('已进入在线做题：选择答案或填写简答；完成后点“在线批改”。');
-});
-gradeQuizBtn?.addEventListener('click', ()=>{
+function updateStatsText(){
+  const total = currentAnswers.length;
+  if (!total){ statText.textContent=''; return; }
+  const correct = currentAnswers.filter(a=>a && a.correct).length;
+  statText.textContent = `本次成绩：${Math.round((correct/total)*100)||0}% 正确率；共 ${total} 题， 其中正确 ${correct} 题`;
+}
+
+// 批改（底部按钮）
+gradeQuizBtn.addEventListener('click', ()=>{
   if (!currentData.length) return;
-  // 逐题判定（不使用红绿，显示徽标），并自动把错题加入错题本
+  let correct = 0;
   currentData.forEach((q, idx)=>{
     const qt = (q.question_type || (q.options?.length? 'mcq':'short')).toLowerCase();
     const rec = currentAnswers[idx] || {};
@@ -286,38 +267,25 @@ gradeQuizBtn?.addEventListener('click', ()=>{
         });
       }
     }
-
-    // 显示徽标
-    const card = questionsContainer.children[idx];
-    const badge = card.querySelector('.badge');
-    if (badge){
-      badge.style.display = 'inline-block';
-      badge.textContent = ok ? '✔ 正确' : '✖ 再想想';
-    }
+    if (ok) correct++;
   });
-  renderStats();
-  alert('批改完成：已给出判断，并自动加入错题本。');
-});
-resetBtn?.addEventListener('click', ()=>{
-  quizMode = false;
-  currentAnswers = [];
-  qsa('.badge').forEach(b=>{ b.style.display='none'; b.textContent='未批改'; });
-  renderStats();
-  alert('已重置：可以重新开始。');
+  updateStatsText();
+  alert('批改完成：已统计成绩，并自动加入错题。');
 });
 
 // 生成题目
-generateBtn?.addEventListener('click', async () => {
+generateBtn.addEventListener('click', async () => {
   const questionCount = parseInt(qs('#questionCount').value, 10);
   const difficulty = qs('#difficulty').value;
   const topic = qs('#topic').value;
-  const formType = qs('#formType').value;
+  const formTypeSel = qs('#formType').value;
+  // 将三个“短答类”统一为 short，选择题为 mcq，混合为 mixed
+  let formType = 'mixed';
+  if (formTypeSel === 'mcq') formType = 'mcq';
+  else if (formTypeSel.startsWith('short')) formType = 'short';
 
   questionsContainer.innerHTML = '<p class="muted">正在生成题目，请稍候...</p>';
-  exportPaperBtn.disabled = true;
-  exportPaperSolBtn.disabled = true;
-  statBar.style.display='none';
-  quizMode = false;
+  gradingBar.style.display='none';
 
   try {
     const resp = await fetch('/.netlify/functions/generate', {
@@ -343,16 +311,16 @@ generateBtn?.addEventListener('click', async () => {
   }
 });
 
-// 导出文件名：日期+试卷/解析+编号
+// 导出文件名：日期+试卷/解析+编号（自动轮换 A/B/C/D）
 function todayStr(){
   const d = new Date();
   const pad = n=> String(n).padStart(2,'0');
   return `${d.getFullYear()}${pad(d.getMonth()+1)}${pad(d.getDate())}`;
 }
 function makeFileName(isSolutions=false, isWrongbook=false){
-  const code = qs('#paperCode')?.value || 'A';
   const date = todayStr();
   if (isWrongbook) return `${date}-错题本`;
+  const code = nextPaperCode();
   return isSolutions ? `${date}-解析-${code}` : `${date}-试卷-${code}`;
 }
 let _origTitle = document.title;
@@ -366,13 +334,13 @@ function restoreTitle(){
   document.title = _origTitle;
 }
 
-exportPaperBtn?.addEventListener('click', () => {
+exportPaperBtn.addEventListener('click', () => {
   const name = makeFileName(false,false);
   preparePrint('paper', name);
   window.print();
   restoreTitle();
 });
-exportPaperSolBtn?.addEventListener('click', () => {
+exportPaperSolBtn.addEventListener('click', () => {
   const name = makeFileName(true,false);
   preparePrint('paper_solutions', name);
   window.print();
