@@ -1,9 +1,9 @@
 
 // netlify/functions/generate.js
-// v9 + user prompt (v2): 
-// - Question stem = Chinese instruction (line1) + English content (line2)
-// - Guarantee answer_explanation (fallback build from explain/hint/answer)
-// - Keep v9 UI schema; batched to avoid 504
+// v9 + user prompt (v3):
+// - question: line1 CN instruction by type; line2 English sentence/material
+// - always provide explanation; if missing -> heuristic steps + hint
+// - keep v9 UI schema; batched to avoid 504
 
 const TIMEOUT_MS = parseInt(process.env.TIMEOUT_MS || '22000', 10);
 const BATCH_SIZE = parseInt(process.env.BATCH_SIZE || '4', 10);
@@ -36,7 +36,7 @@ function mapTypes(form, subtype){
   return ["choice","error","transform","fill","rearrange"];
 }
 
-// ===== System prompt (hardcoded, per user) =====
+// ---- system prompt with user's wording ----
 function buildSystemPrompt({ mode, count, types, level="normal", focus="" }){
   const header = `你是一名小学英语教研员，熟悉“译林版”六年级下/上册语法要求。请根据参数生成题库，并严格输出 JSON（不要多余文字）。
 【目标】生成适合六年级学生的题目，覆盖：时态（一般现在/过去/进行）、主谓一致、代词（物主/反身）、形容词/副词比较级与最高级、句型转换、连词成句、短文语法选择。讲解要口语化、分步骤、举例子，解释为什么错。
@@ -47,7 +47,7 @@ function buildSystemPrompt({ mode, count, types, level="normal", focus="" }){
 【格式】只输出 JSON（面向学生的操作提示用中文，例如“把下列句子改为否定句/一般疑问句/选择正确形式”；英语例句本身保持英文）`;
 
   const details = `2.题干必须两行：
-- 第 1 行：中文操作指令（如：【操作】把句子改为一般疑问句 / 选择正确形式 / 连词成句 等）。
+- 第 1 行：中文操作指令（如：【操作】选择正确形式 / 把句子改为一般疑问句 / 连词成句 等）。
 - 第 2 行：英文题目/材料（不得包含中文翻译；填空用 (   ) 表示空）。
 3."分步讲解：\\n1) 先看时间状语…\\n2) 主语是三单…\\n3) 规则/不规则变化…\\n举例：This/That…"
 4.【出题参数】
@@ -80,7 +80,7 @@ function buildUserPrompt(count){
   return `请生成 ${count} 道题，严格只返回 JSON 数组（不要 markdown 代码块）。所有对象字段必须完整、符合上面的 schema。`;
 }
 
-// ===== Upstream call =====
+// ---- Upstream call ----
 async function callLLM({ BASE, KEY, MODEL, systemContent, userContent, count }){
   const url = `${BASE.replace(/\/+$/,'')}/chat/completions`;
   const controller = new AbortController();
@@ -106,7 +106,6 @@ async function callLLM({ BASE, KEY, MODEL, systemContent, userContent, count }){
     }
     const data = await resp.json();
     const content = data?.choices?.[0]?.message?.content?.trim() || '';
-    // Expect an array; accept fenced JSON too
     let arr;
     try{ arr = JSON.parse(content); }
     catch(e){
@@ -122,37 +121,93 @@ async function callLLM({ BASE, KEY, MODEL, systemContent, userContent, count }){
   }
 }
 
-// ===== Helpers for question/explanation fallbacks =====
-function ensureBilingualQuestion(qt, question){
-  const q = String(question||'').replace(/(?:参考答案|答案)\s*[:：].*$/i,'').trim();
-  const hasCJK = /[\u4e00-\u9fff]/.test(q);
-  const lines = q.split(/\n+/).map(s=>s.trim()).filter(Boolean);
-  if (hasCJK && lines.length >= 2) return lines[0] + '\n' + lines.slice(1).join(' ');
-  // Build a Chinese instruction + pick an English line
-  let cn = '【操作】按要求作答：';
-  if (qt === 'mcq') cn = '【操作】选择正确答案：';
-  const en = (lines.find(l=>/[A-Za-z]/.test(l)) || q || 'Write the correct form.').replace(/(?:参考答案|答案)\s*[:：].*$/i,'').trim();
-  return `${cn}\n${en}`;
+// ---- Heuristic helpers for fallback explanation ----
+const tenseMarkers = [
+  { re: /\bevery (day|morning|afternoon|evening|week|month)\b|\balways\b|\boften\b|\busually\b|\bsometimes\b|\bon (Mondays?|Tuesdays?|Wednesdays?|Thursdays?|Fridays?|Saturdays?|Sundays?)\b/i, label: '一般现在时', tip: '看习惯频率词 → 一般现在时' },
+  { re: /\byesterday\b|\blast (night|week|month|year)\b|\bago\b|\bin 20\d{2}\b/i, label: '一般过去时', tip: '看过去时间词 → 一般过去时' },
+  { re: /\bnow\b|\bright now\b|\bat the moment\b|\bcurrently\b|\btoday\b|\blook!|\blisten!/i, label: '现在进行时', tip: '看 now/正在发生 → 现在进行时' }
+];
+function detectTense(line){
+  for (const m of tenseMarkers){
+    if (m.re.test(line)) return { label: m.label, tip: m.tip };
+  }
+  return { label: '（根据语境判断时态）', tip: '先看时间词，再看动词形式' };
 }
-function buildExplanation(item, qt, options, answer_letter, answer_text){
+function detectSubject(line){
+  const lower = (line||'').toLowerCase();
+  const subjs = ['i','you','he','she','it','we','they'];
+  for (const s of subjs){
+    const re = new RegExp('\\b'+s+'\\b');
+    if (re.test(lower)) return s;
+  }
+  return '';
+}
+function buildHeuristicSteps(qt, enLine, options, answer_letter, answer_text){
+  const steps = [];
+  // Step 1: time markers
+  const tense = detectTense(enLine);
+  steps.push(`1) 先看时间状语：${tense.tip}。`);
+  // Step 2: subject agreement
+  const subj = detectSubject(enLine);
+  if (subj){
+    const zh = {i:'第一人称', you:'第二人称', he:'第三人称单数', she:'第三人称单数', it:'第三人称单数', we:'复数', they:'复数'}[subj] || subj;
+    steps.push(`2) 主语是 ${subj}（${zh}），据此选择动词形式。`);
+  }else{
+    steps.push(`2) 看主语的单复数（如 he/she/it 为第三人称单数需要加 -s）。`);
+  }
+  // Step 3: rule
+  if (qt === 'mcq'){
+    const correctOpt = options.find(o => o.startsWith(answer_letter + ')')) || '';
+    const word = correctOpt.replace(/^[A-D]\)\s*/,'').split(/\s+/)[0];
+    if (/s$/.test(word)) steps.push(`3) 一般现在时第三人称单数动词需加 -s/-es：选择 "${word}"。`);
+    else if (/ing$/.test(word)) steps.push(`3) 现在进行时用 be + V-ing，本题不选 "-ing" 形式。`);
+    else if (/ed$/.test(word)) steps.push(`3) 一般过去时用动词过去式，本题若含过去时间词则选 "-ed" 形式或不规则过去式。`);
+    else steps.push(`3) 根据时态与主语选择正确的动词形式。`);
+    const example = enLine.replace(/\(\s*\)/, word||answer_text||'the correct form');
+    steps.push(`举例：${example}`);
+  }else{
+    steps.push(`3) 按所需时态和主谓一致改写/填空，注意大写与标点。`);
+    if (answer_text){
+      const eg = /[.!?]$/.test(answer_text) ? answer_text : (answer_text + '.');
+      steps.push(`举例：${eg}`);
+    }
+  }
+  return steps.join('\n');
+}
+
+// Build bilingual question display and return {display, en}
+function buildBilingualQuestion(qt, raw){
+  const q = String(raw||'').replace(/(?:参考答案|答案)\s*[:：].*$/i,'').trim();
+  const lines = q.split(/\n+/).map(s=>s.trim()).filter(Boolean);
+  // extract English line
+  const en = (lines.find(l=>/[A-Za-z]/.test(l)) || q || 'Write the correct form.').trim();
+  // Chinese instruction by type
+  const cnByType = {
+    mcq: '【操作】选择正确形式：',
+    short: '【操作】按要求作答：'
+  };
+  const cn = cnByType[qt] || '【操作】按要求作答：';
+  return { display: `${cn}\n${en}`, en };
+}
+
+// build explanation string (ensure presence)
+function buildExplanation(item, qt, options, answer_letter, answer_text, enLine){
   let ex = String(item.answer_explanation || '').trim();
   const hasSteps = /分步讲解/.test(ex);
   const hasRef = /参考答案|正确答案/.test(ex);
   if (!ex || !(hasSteps && hasRef)){
     const ref = qt==='mcq' ? `参考答案：${answer_letter}` : `参考答案：${answer_text||''}`;
-    const steps = String(item.explain || '').trim();
-    const hint = String(item.hint || '').trim();
-    ex = ref + (steps ? `\n分步讲解：\n${steps}` : '') + (hint ? `\n提示：${hint}` : '');
-    ex = ex.trim();
+    const steps = String(item.explain || '').trim() || buildHeuristicSteps(qt, enLine, options, answer_letter, answer_text);
+    const hint = String(item.hint || '').trim() || '先看时间词，再判断时态与主谓一致。';
+    ex = `${ref}\n分步讲解：\n${steps}\n提示：${hint}`;
   }
   return ex.slice(0, 2000);
 }
 
-// ===== Sanitization to v9 schema =====
+// ---- map to v9 schema ----
 function toV9Schema(item){
   const qt = String(item.question_type || '').toLowerCase() === 'short' ? 'short' : 'mcq';
-  const questionRaw = item.question ?? '';
-  const question = ensureBilingualQuestion(qt, questionRaw).slice(0, 600);
+  const rawQ = item.question ?? '';
   const options = Array.isArray(item.options) ? ensureABCD(item.options) : [];
   let answer_letter = qt==='mcq' ? toMcqLetter(item.answer_letter) : '';
   let answer_text = String(item.answer_text || '').slice(0, 400);
@@ -160,11 +215,20 @@ function toV9Schema(item){
     const idx = {A:0,B:1,C:2,D:3}[answer_letter] ?? 0;
     answer_text = options[idx]?.replace(/^\s*[A-D]\)\s*/,'') || '';
   }
-  const answer_explanation = buildExplanation(item, qt, options, answer_letter, answer_text);
-  return { question_type: qt, question, options, answer_letter, answer_text, answer_explanation };
+
+  const { display, en } = buildBilingualQuestion(qt, rawQ);
+  const answer_explanation = buildExplanation(item, qt, options, answer_letter, answer_text, en);
+  return {
+    question_type: qt,
+    question: display.slice(0, 600),
+    options,
+    answer_letter,
+    answer_text,
+    answer_explanation
+  };
 }
 
-// Simple concurrency limit
+// ---- concurrency ----
 async function mapLimit(arr, limit, iteratee){
   const ret=[]; const executing=[];
   for (const item of arr){
@@ -177,7 +241,7 @@ async function mapLimit(arr, limit, iteratee){
   return Promise.all(ret);
 }
 
-// ===== Handler =====
+// ---- handler ----
 exports.handler = async (event) => {
   try{
     if (event.httpMethod !== 'POST') {
@@ -201,7 +265,7 @@ exports.handler = async (event) => {
     const level = process.env.CUSTOM_LEVEL || 'normal';
     const focus = process.env.CUSTOM_FOCUS || '';
 
-    // Build batches
+    // batches
     const batches=[]; let remain = total;
     while(remain > 0){ const c = Math.min(BATCH_SIZE, remain); batches.push(c); remain -= c; }
 
@@ -219,7 +283,6 @@ exports.handler = async (event) => {
       else retry.push({ need: batches[i], err: r });
     });
 
-    // Retry with smaller count (max 3) sequentially
     for (const r of retry){
       const need = Math.min(3, r.need);
       const systemPrompt = buildSystemPrompt({ mode, count: need, types, level, focus });
