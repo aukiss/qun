@@ -10,11 +10,11 @@
   <main class="container">
     <header class="hero">
       <h1>🎓 六年级英语出题器</h1>
-      <p class="sub">@凉风有信开发 反馈请联系微信wuliaotop</p>
+      <p class="sub">为小学生设计：按钮大、字号清晰、适配平板与手机。</p>
     </header>
 
     <section class="controls card">
-      <div class="row">
+      <div class="grid">
         <label class="field">
           <span>题量</span>
           <select id="questionCount">
@@ -33,7 +33,7 @@
           </select>
         </label>
 
-        <label class="field grow">
+        <label class="field">
           <span>知识点（可选）</span>
           <select id="topic">
             <option value="">不限</option>
@@ -69,25 +69,22 @@
         </label>
       </div>
 
-      <div class="row">
-        <div class="btn-group">
+      <div class="toolbar">
+        <div class="btn-row">
           <button id="btnGrammar" class="btn pill primary">📘 语法</button>
           <button id="btnTenses" class="btn pill accent">⏰ 时态</button>
           <button id="generateBtn" class="btn solid large">🪄 一键生成</button>
         </div>
-        <div class="btn-group right">
+        <div class="btn-row">
+          <button id="startQuizBtn" class="btn solid primary large">▶️ 在线做题</button>
+          <button id="gradeQuizBtn" class="btn outline large">✅ 在线批改</button>
+          <button id="resetBtn" class="btn ghost">🔄 重置</button>
+        </div>
+        <div class="btn-row">
           <button id="exportPaperBtn" class="btn outline large" disabled>🖨️ 导出试卷</button>
           <button id="exportPaperSolBtn" class="btn outline large" disabled>🖨️ 导出试卷+解析</button>
         </div>
-      </div>
-
-      <div class="row wrap">
-        <div class="mini-group">
-          <button id="startQuizBtn" class="btn ghost">▶️ 在线做题</button>
-          <button id="gradeQuizBtn" class="btn ghost">✅ 在线批改</button>
-          <button id="resetBtn" class="btn ghost">🔄 重置</button>
-        </div>
-        <div class="mini-group">
+        <div class="btn-row">
           <button id="viewWrongBtn" class="btn ghost">📚 查看错题本</button>
           <button id="exportWrongPdfBtn" class="btn ghost">🖨️ 错题本PDF</button>
           <button id="clearWrongBtn" class="btn ghost danger">🗑️ 清空错题本</button>
@@ -104,10 +101,6 @@
       <p class="muted">选择条件后，点“🪄 一键生成”。</p>
     </section>
   </main>
-
-  <footer class="foot muted">
-    <p>为小学生设计：按钮大、字号清晰、适配平板与手机。</p>
-  </footer>
 
   <script src="./script.js"></script>
 </body>
