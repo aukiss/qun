@@ -196,6 +196,7 @@ function renderQuestions(questions, opts={}){
     const ans = document.createElement('div');
     ans.className = 'answer';
     ans.style.display = 'none';
+    ans.style.display = 'none';
     const slim = slimExplanation(q.answer_letter ?? '', q.answer_text ?? '', q.answer_explanation ?? '');
     ans.innerHTML = `<pre>${slim}</pre>`;
 
@@ -395,4 +396,25 @@ document.getElementById('showAllExplainBtn')?.addEventListener('click', () => {
   answers.forEach(a => { if (getComputedStyle(a).display === 'none') anyHidden = true; });
   answers.forEach(a => { a.style.display = anyHidden ? 'block' : 'none'; });
   btn.textContent = anyHidden ? '隐藏全部解析' : '显示全部解析';
+});
+
+
+/** 全局：显示/隐藏全部解析（事件委托，支持多个按钮） */
+function toggleAllExplanations(){
+  const answers = document.querySelectorAll('.answer');
+  let anyHidden = false;
+  answers.forEach(a => { if (getComputedStyle(a).display === 'none') anyHidden = true; });
+  answers.forEach(a => { a.style.display = anyHidden ? 'block' : 'none'; });
+  // 同步所有按钮文案
+  document.querySelectorAll('[data-role="toggle-all-explain"]').forEach(btn=>{
+    btn.textContent = anyHidden ? '隐藏全部解析' : '显示全部解析';
+  });
+}
+// 事件委托，页面任意地方新增按钮都能生效
+document.addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-role="toggle-all-explain"]');
+  if (btn) {
+    e.preventDefault();
+    toggleAllExplanations();
+  }
 });
