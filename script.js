@@ -152,7 +152,7 @@ function renderQuestions(questions, opts={}){
 
     const qText = document.createElement('div');
     qText.className = 'qtext';
-    qText.innerHTML = `${(q.question ?? '').replace(/^【[^】]*】\s*/,'')}`;
+    qText.innerHTML = `${q.question ?? ''}`;
 
     card.appendChild(meta);
     card.appendChild(qText);
@@ -195,8 +195,6 @@ function renderQuestions(questions, opts={}){
 
     const ans = document.createElement('div');
     ans.className = 'answer';
-    ans.style.display = 'none';
-    ans.style.display = 'none';
     const slim = slimExplanation(q.answer_letter ?? '', q.answer_text ?? '', q.answer_explanation ?? '');
     ans.innerHTML = `<pre>${slim}</pre>`;
 
@@ -385,30 +383,4 @@ exportWrongPdfBtn.addEventListener('click', ()=>{
   preparePrint('paper_solutions', name);
   window.print();
   restoreTitle();
-});
-
-
-document.getElementById('showAllExplainBtn')?.addEventListener('click', () => {
-  const btn = document.getElementById('showAllExplainBtn');
-  const answers = document.querySelectorAll('.answer');
-  // If any hidden, show all; else hide all
-  let anyHidden = false;
-  answers.forEach(a => { if (getComputedStyle(a).display === 'none') anyHidden = true; });
-  answers.forEach(a => { a.style.display = anyHidden ? 'block' : 'none'; });
-  btn.textContent = anyHidden ? '隐藏全部解析' : '显示全部解析';
-});
-
-// STABLE: show/hide all explanations via delegation (won't break other buttons)
-function toggleAllExplanations(){
-  const answers = document.querySelectorAll('.answer');
-  let anyHidden = false;
-  answers.forEach(a => { if (getComputedStyle(a).display === 'none') anyHidden = true; });
-  answers.forEach(a => { a.style.display = anyHidden ? 'block' : 'none'; });
-  document.querySelectorAll('[data-role="toggle-all-explain"]').forEach(btn=>{
-    btn.textContent = anyHidden ? '隐藏全部解析' : '显示全部解析';
-  });
-}
-document.addEventListener('click', (e) => {
-  const btn = e.target.closest('[data-role="toggle-all-explain"]');
-  if (btn) { e.preventDefault(); toggleAllExplanations(); }
 });
