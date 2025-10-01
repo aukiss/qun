@@ -48,6 +48,25 @@
             <option value="future simple">一般将来时</option>
           </select>
         </label>
+
+        <label class="field">
+          <span>出题形式</span>
+          <select id="formType">
+            <option value="mcq">选择题</option>
+            <option value="short">填空/简答</option>
+            <option value="mixed" selected>混合</option>
+          </select>
+        </label>
+
+        <label class="field">
+          <span>试卷编号</span>
+          <select id="paperCode">
+            <option value="A" selected>A</option>
+            <option value="B">B</option>
+            <option value="C">C</option>
+            <option value="D">D</option>
+          </select>
+        </label>
       </div>
 
       <div class="row">
@@ -64,12 +83,14 @@
 
       <div class="row wrap">
         <div class="mini-group">
+          <button id="startQuizBtn" class="btn ghost">▶️ 在线做题</button>
+          <button id="gradeQuizBtn" class="btn ghost">✅ 在线批改</button>
+          <button id="resetBtn" class="btn ghost">🔄 重置</button>
+        </div>
+        <div class="mini-group">
           <button id="viewWrongBtn" class="btn ghost">📚 查看错题本</button>
           <button id="exportWrongPdfBtn" class="btn ghost">🖨️ 错题本PDF</button>
           <button id="clearWrongBtn" class="btn ghost danger">🗑️ 清空错题本</button>
-        </div>
-        <div class="mini-group">
-          <span class="tip">提示：错题自动收集在本设备（LocalStorage）。可导出 PDF 以跨设备查看。</span>
         </div>
       </div>
     </section>
@@ -80,7 +101,7 @@
     </section>
 
     <section id="questionsContainer" class="questions">
-      <p class="muted">选择题量/难度/知识点后，点“🪄 一键生成”。</p>
+      <p class="muted">选择条件后，点“🪄 一键生成”。</p>
     </section>
   </main>
 

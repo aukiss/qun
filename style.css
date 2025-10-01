@@ -29,8 +29,8 @@ body{
 }
 
 .controls .row{ display:flex; gap:12px; flex-wrap:wrap; align-items:flex-end; }
-.field{ display:flex; flex-direction:column; gap:6px; min-width:160px;}
-.field.grow{ flex:1 1 240px;}
+.field{ display:flex; flex-direction:column; gap:6px; min-width:150px;}
+.field.grow{ flex:1 1 220px;}
 .field span{ font-size:14px; color:var(--muted);}
 select{ height:44px; padding:0 12px; font-size:18px; border:1px solid var(--border); border-radius:12px; background:#fff;}
 
@@ -66,7 +66,8 @@ select{ height:44px; padding:0 12px; font-size:18px; border:1px solid var(--bord
 .options li.touch{ border-color:#e5e7eb;}
 
 .answer{ display:none; border-top:1px dashed var(--border); margin-top:8px; padding-top:8px; }
-.answer pre{ white-space:pre-wrap; font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace; font-size:14px; margin:0; }
+.answer pre{ white-space:pre-wrap; font-family:system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; font-size:18px; margin:0; line-height:1.5; }
+
 .ctrls-row{ display:flex; gap:8px; flex-wrap:wrap; margin-top:8px;}
 .ctrls-row .btn{ height:40px; font-size:16px; }
 
@@ -86,11 +87,13 @@ select{ height:44px; padding:0 12px; font-size:18px; border:1px solid var(--bord
   .qtext{ font-size:18px;}
 }
 
-/* 打印样式 */
+/* 打印样式：每页 5 题，无论是否带解析 */
 @media print{
   body{ background:#fff; }
-  .controls, .foot, #generateBtn, #exportPaperBtn, #exportPaperSolBtn, .toggle, .ctrls-row, .stats{ display:none !important; }
+  .controls, .foot, #generateBtn, #exportPaperBtn, #exportPaperSolBtn, .toggle, .ctrls-row, .stats,
+  #startQuizBtn, #gradeQuizBtn, #resetBtn { display:none !important; }
   .question-card{ page-break-inside: avoid; border-color:#ddd; }
+  .question-card:nth-child(5n){ page-break-after: always; }
   body.paper .answer{ display:none !important; }
   body.paper_solutions .answer{ display:block !important; }
 }
