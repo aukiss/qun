@@ -1,80 +1,71 @@
+
 // netlify/functions/generate.js
-// 使用 Netlify Functions（Node 18 原生 fetch）。返回严格 JSON 数组。
-// 每个元素包含：question, options[4], answer_letter(A/B/C/D), answer_explanation(多行文本).
+// 改进版：批处理(每批5题) + 并发限制 + 自动降级重试，减少 504 概率。
 
-exports.handler = async (event) => {
-  try {
-    if (event.httpMethod !== "POST") {
-      return { statusCode: 405, body: "Method Not Allowed" };
+/** 简单并发控制 */
+async function mapLimit(arr, limit, iteratee) {
+  const ret = [];
+  const executing = [];
+  for (const item of arr) {
+    const p = Promise.resolve().then(() => iteratee(item));
+    ret.push(p);
+    if (limit <= arr.length) {
+      const e = p.then(() => executing.splice(executing.indexOf(e), 1));
+      executing.push(e);
+      if (executing.length >= limit) await Promise.race(executing);
     }
-
-    const body = JSON.parse(event.body || "{}");
-    const questionType = body.questionType || "grammar"; // grammar | tenses
-    const questionCount = Math.min(Math.max(parseInt(body.questionCount || 10,10), 1), 50);
-
-    const BASE = process.env.OPENAI_BASE_URL;        // e.g. https://api.videocaptioner.cn/v1
-    const KEY  = process.env.OPENAI_API_KEY;         // your relay key
-    const MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
-
-    if (!BASE || !KEY) {
-      return {
-        statusCode: 500,
-        body: JSON.stringify({ error: "Server not configured: missing OPENAI_BASE_URL or OPENAI_API_KEY" })
-      };
-    }
-
-    const url = `${BASE.replace(/\/+$/,"")}/chat/completions`;
-
-    const topicHint = questionType === 'tenses'
-      ? '侧重英语时态（一般现在时、一般过去时、现在进行时、一般将来时等），避免超纲。'
-      : '侧重小学阶段常见语法（主谓一致、代词、介词短语、比较级/最高级的入门、冠词等），避免超纲。';
-
-    const explainTemplate = [
-      "解析思路：简要说明为什么选该项。",
-      "分步讲解：",
-      "1) 先看时间状语（如：every day, yesterday, now 等）；",
-      "2) 判断时态或语法点；",
-      "3) 套用规则，排除错误选项。",
-      "举例：给出1句相同规则的英文例句。",
-      "提示：给六年级学生的直观提示。"
-    ].join("\n");
-
-    const systemPrompt = `你是小学英语出题老师，为六年级学生生成选择题（四选一）。${topicHint}
-输出严格 JSON 数组（不要 markdown 代码块）。数组长度为 ${questionCount}。每个元素必须是：
-{
-  "question": "中文引导 + 英文题干，避免太长",
-  "options": ["A) ...","B) ...","C) ...","D) ..."],
-  "answer_letter": "A|B|C|D 之一",
-  "answer_explanation": "参考答案：A\n${explainTemplate}"
+  }
+  return Promise.all(ret);
 }
-要求：
-- 题干中若有空格填空，用 (   ) 表示空格；
-- options 必须恰好 4 个，且显式带字母 A) B) C) D)；
-- 题目难度适中，语料贴近生活校园场景。`;
 
-    const messages = [
-      { role: "system", content: systemPrompt },
-      { role: "user", content: "请生成题目。" }
-    ];
+async function callUpstream({ BASE, KEY, MODEL, questionType, count }) {
+  const url = `${BASE.replace(/\/+$/, "")}/chat/completions`;
 
+  const topicHint =
+    questionType === "tenses"
+      ? "侧重英语时态（一般现在/过去/进行/将来等），避免超纲。"
+      : "侧重小学常见语法（主谓一致、代词、介词、比较级入门、冠词等），避免超纲。";
+
+  const systemPrompt = `你是小学英语出题老师，为六年级学生生成选择题（四选一）。${topicHint}
+输出严格 JSON 数组（不要 markdown 代码块）。数组长度为 ${count}。每个元素必须：
+{
+  "question": "中文引导 + 英文题干（如有填空用 (   )）",
+  "options": ["A) ...","B) ...","C) ...","D) ..."],
+  "answer_letter": "A|B|C|D",
+  "answer_explanation": "参考答案：A\n解析思路：\n分步讲解：1) 先看时间状语；2) 判断时态或语法点；3) 套用规则。\n举例：给出相同规则的英文例句。\n提示：给六年级学生的直观提示。"
+}`;
+
+  const messages = [
+    { role: "system", content: systemPrompt },
+    { role: "user", content: "请生成题目。" },
+  ];
+
+  // 使用 AbortController 控制单次上游最长等待 9s（避免函数整体超时）
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 9000);
+
+  try {
     const resp = await fetch(url, {
       method: "POST",
       headers: {
-        "Authorization": `Bearer ${KEY}`,
-        "Content-Type": "application/json"
+        Authorization: `Bearer ${KEY}`,
+        "Content-Type": "application/json",
       },
       body: JSON.stringify({
         model: MODEL,
-        temperature: 0.6,
-        messages
-      })
+        temperature: 0.5,
+        max_tokens: 1200,
+        messages,
+      }),
+      signal: controller.signal,
     });
 
     if (!resp.ok) {
       const text = await resp.text();
       return {
-        statusCode: resp.status,
-        body: JSON.stringify({ error: `Upstream error ${resp.status}`, detail: text.slice(0,2000) })
+        ok: false,
+        status: resp.status,
+        detail: text.slice(0, 2000),
       };
     }
 
@@ -85,32 +76,104 @@ exports.handler = async (event) => {
     let arr;
     try {
       arr = JSON.parse(cleaned);
-      if (!Array.isArray(arr)) throw new Error("Model response is not an array.");
-      // 进行基本字段校验与裁剪
-      arr = arr.map((it, idx) => {
-        const q = {};
-        q.question = String(it.question || "").slice(0, 500);
-        const opts = Array.isArray(it.options) ? it.options.slice(0,4) : [];
-        while (opts.length < 4) opts.push("");
-        q.options = opts.map(s => String(s).slice(0, 200));
-        const letter = String(it.answer_letter || "").replace(/[^ABCD]/g,"") || "A";
-        q.answer_letter = letter;
-        q.answer_explanation = String(it.answer_explanation || "").slice(0, 1200);
-        return q;
-      });
+      if (!Array.isArray(arr)) throw new Error("not array");
     } catch (e) {
+      return { ok: false, status: 502, detail: "invalid JSON from model", raw };
+    }
+    // 轻度清洗
+    arr = arr.map((it) => ({
+      question: String(it.question || "").slice(0, 500),
+      options: (Array.isArray(it.options) ? it.options : [])
+        .slice(0, 4)
+        .map((s) => String(s || "").slice(0, 200)),
+      answer_letter: String(it.answer_letter || "A").replace(/[^ABCD]/g, "") || "A",
+      answer_explanation: String(it.answer_explanation || "").slice(0, 1200),
+    }));
+    while (arr.length < count) arr.push(arr[arr.length - 1] || {question:"", options:["A) ","B) ","C) ","D) "], answer_letter:"A", answer_explanation:""});
+    return { ok: true, data: arr.slice(0, count) };
+  } catch (err) {
+    return { ok: false, status: 504, detail: "fetch aborted or network error: " + (err && err.message) };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+exports.handler = async (event) => {
+  try {
+    if (event.httpMethod !== "POST") {
+      return { statusCode: 405, body: "Method Not Allowed" };
+    }
+
+    const body = JSON.parse(event.body || "{}");
+    const questionType = body.questionType || "grammar"; // grammar | tenses
+    const total = Math.min(Math.max(parseInt(body.questionCount || 10, 10), 1), 40);
+
+    const BASE = process.env.OPENAI_BASE_URL; // e.g. https://api.videocaptioner.cn/v1
+    const KEY = process.env.OPENAI_API_KEY;
+    const MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
+
+    if (!BASE || !KEY) {
       return {
-        statusCode: 502,
-        body: JSON.stringify({ error: "Model did not return valid JSON", raw })
+        statusCode: 500,
+        body: JSON.stringify({
+          error: "Server not configured: missing OPENAI_BASE_URL or OPENAI_API_KEY",
+        }),
+      };
+    }
+
+    // 按 5 题一批拆分，默认并发 2，单批 9 秒超时。
+    const batchSize = 5;
+    const batches = Math.ceil(total / batchSize);
+    const tasks = Array.from({ length: batches }, (_, i) => {
+      const count = i === batches - 1 ? total - i * batchSize : batchSize;
+      return { count };
+    });
+
+    let results = [];
+    // 并发 2 执行
+    const firstPass = await mapLimit(tasks, 2, async (t) =>
+      callUpstream({ BASE, KEY, MODEL, questionType, count: t.count })
+    );
+
+    // 收集成功，记录失败
+    const failed = [];
+    firstPass.forEach((res, idx) => {
+      if (res.ok) results = results.concat(res.data);
+      else failed.push({ idx, need: tasks[idx].count, res });
+    });
+
+    // 对失败的批次，降级重试：减少题量（每批 3 题），并发 1
+    if (failed.length) {
+      const retryTasks = failed.map((f) => ({ count: Math.min(3, f.need) }));
+      const secondPass = await mapLimit(retryTasks, 1, async (t) =>
+        callUpstream({ BASE, KEY, MODEL, questionType, count: t.count })
+      );
+      secondPass.forEach((res) => {
+        if (res.ok) results = results.concat(res.data);
+      });
+    }
+
+    // 截断到目标总量
+    results = results.slice(0, total);
+
+    if (!results.length) {
+      return {
+        statusCode: 504,
+        body: JSON.stringify({
+          error: "Upstream timeout or invalid response. 请尝试降低题量到 10，并重试。",
+        }),
       };
     }
 
     return {
       statusCode: 200,
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(arr)
+      body: JSON.stringify(results),
     };
   } catch (err) {
-    return { statusCode: 500, body: JSON.stringify({ error: err.message || String(err) }) };
+    return {
+      statusCode: 500,
+      body: JSON.stringify({ error: err.message || String(err) }),
+    };
   }
 };
