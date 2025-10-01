@@ -1,8 +1,4 @@
-[build]
-  functions = "netlify/functions"
-  publish = "."
 
-[[headers]]
-  for = "/.netlify/functions/*"
-  [headers.values]
-    Cache-Control = "no-store"
+[functions]
+  node_bundler = "esbuild"
+  directory = "netlify/functions"

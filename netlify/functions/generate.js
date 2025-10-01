@@ -1,227 +1,213 @@
 
-// netlify/functions/generate.js (v8)
-// Support specialized subtypes for short-answer: correct / transform / reorder
-// plus previous batching/retry logic.
+// netlify/functions/generate.js
+// Fresh rewrite for V9 UI (keep UI untouched, PDF untouched)
+// - Endpoint: /.netlify/functions/generate (same as旧版)
+// - Uses the same prompt spec as tutor.js, but outputs V9 schema [6 fields]
+// - Robust: batching, timeout, JSON-in-code-block rescue, explanation fallback
 
-async function mapLimit(arr, limit, iteratee) {
-  const ret = [];
-  const executing = [];
-  for (const item of arr) {
-    const p = Promise.resolve().then(() => iteratee(item));
-    ret.push(p);
-    if (limit <= arr.length) {
-      const e = p.then(() => executing.splice(executing.indexOf(e), 1));
-      executing.push(e);
-      if (executing.length >= limit) await Promise.race(executing);
+const TIMEOUT_MS = parseInt(process.env.TIMEOUT_MS || '22000', 10);
+const BATCH = parseInt(process.env.BATCH || '5', 10);
+const PARALLEL = parseInt(process.env.PARALLEL || '2', 10);
+
+const ALPHA = ['A','B','C','D'];
+
+function cleanOption(s){ return String(s||'').replace(/^\s*[A-D]\s*[\)\.\u3001、]\s*/i,'').trim(); }
+function ensureABCD(arr){
+  const xs = (arr||[]).slice(0,4).map((t,i)=>`${ALPHA[i]}) ${cleanOption(t?.text ?? t)}`);
+  while (xs.length<4) xs.push(`${ALPHA[xs.length]}) `);
+  return xs;
+}
+function letter(v){ const x = String(v||'A').toUpperCase(); return ALPHA.includes(x) ? x : 'A'; }
+
+function toV9(item){
+  const type = String(item.type||'choice').toLowerCase();
+  const qt = (type === 'choice') ? 'mcq' : 'short';
+  const options = (qt==='mcq') ? ensureABCD(item.options) : [];
+  const ansLetter = (qt==='mcq') ? letter(item.answer) : '';
+  let ansText = '';
+  if (qt==='mcq'){
+    const idx = {A:0,B:1,C:2,D:3}[ansLetter] ?? 0;
+    ansText = cleanOption((item.options?.[idx]?.text) || (options[idx]||'').replace(/^[A-D]\)\s*/,''));
+  }else{
+    ansText = Array.isArray(item.answer) ? item.answer.join(' / ') : String(item.answer||'').trim();
+  }
+  // Build explanation: ensure has steps + hint (no exclamations)
+  const steps = (String(item.explain||'').trim() || '').replace(/\r/g,'').split(/\n+/).filter(Boolean);
+  let explain = '';
+  if (!steps.length){
+    // heuristic fallback
+    const stem = String(item.stem||'').toLowerCase();
+    let lines = ["1) 先看时间状语；", "2) 判断主语（是否三单）；", "3) 根据时态与主谓一致选择或改写；", "举例：将答案放入句中检查通顺。"];
+    if (/yesterday|last|ago|in \d{4}/i.test(stem)) lines[0] = "1) 出现过去时间词 → 一般过去时；";
+    if (/every|always|often|usually|sometimes|on (monday|tuesday|wednesday|thursday|friday|saturday|sunday)s?/i.test(stem)) lines[0] = "1) 习惯/频率词 → 一般现在时；";
+    if (/now|right now|at the moment|look!|listen!/i.test(stem)) lines[0] = "1) 正在发生 → 现在进行时；";
+    explain = `分步讲解：\n${lines.join('\n')}`;
+  }else{
+    // normalize numbering
+    const norm = steps.map(s=> s.replace(/^\d+\s*[\)\.、）]\s*/,'').replace(/^[①②③④⑤⑥⑦⑧⑨]\s*/,'').trim());
+    explain = `分步讲解：\n${norm.map((s,i)=>`${i+1}) ${s}`).join('\n')}`;
+  }
+  let hint = String(item.hint||'先看时间词，再判断时态与主谓一致。').replace(/[!！]+/g,'。').replace(/。。+/g,'。');
+  const ref = (qt==='mcq') ? `参考答案：${ansLetter}` : `参考答案：${ansText}`;
+  const answer_explanation = `${ref}\n${explain}\n提示：${hint}`.slice(0, 2200);
+
+  return {
+    question_type: qt,
+    question: String(item.stem||'').trim().slice(0,600),
+    options,
+    answer_letter: ansLetter,
+    answer_text: ansText,
+    answer_explanation
+  };
+}
+
+function buildSystemPrompt({count, types, level, focus, mode}){
+  // Copied to match tutor.js spec so题质一致
+  return `你是一名小学英语教研员，熟悉“译林版”六年级下/上册语法要求。请根据参数生成题库，并严格输出 JSON（不要多余文字）。
+【目标】生成适合六年级学生的题目，覆盖：时态（一般现在/过去/进行）、主谓一致、代词（物主/反身）、形容词/副词比较级与最高级、句型转换、连词成句、短文语法选择。讲解要口语化、分步骤、举例子，解释为什么错。
+【难度】
+- easy：概念直给+明显提示
+- normal：常规课内
+- hard：选择更易混点、加干扰项
+【格式】只输出 JSON（面向学生的操作提示用中文，例如“把下列句子改为否定句/一般疑问句/选择正确形式”；英语例句本身保持英文）：
+{
+  "meta": { "version": "1.0", "level": "normal|easy|hard", "types": ["choice", ...] },
+  "items": [
+    {
+      "id": "q1",
+      "type": "choice|error|transform|fill|rearrange|reading",
+      "stem": "题干（中文或英文+必要上下文）",
+      "options": [ { "value": "A", "text": "选项文本" }, ... ], // 非选择题可省略
+      "answer": "A" | "答案文本" | ["可接受多个"],
+      "explain": "分步讲解：\n1) 先看时间状语…\n2) 主语是三单…\n3) 规则/不规则变化…\n举例：This/That…",
+      "hint": "给学生的小提示，可空"
     }
+  ]
+}
+【出题参数】
+- 模式: ${mode}（grammar=语法综合；tense=时态专项，仅围绕一般现在/一般过去/现在进行混合）
+- 数量: ${count}
+- 题型: ${types.join(', ')}
+- 难度: ${level}
+- 知识点优先: "${focus}"
+【约束】
+- 操作指令必须中文；避免出现“Transform this sentence ...”这类英文提示。
+- 模式为 tense 时：每题都聚焦三类时态，解析强调“看时间状语→判时态→动词形式/句型转换”。
+- 严格可判分：选择题 answer 用 "A/B/C/D"；填空给出唯一或可接受数组；改错题提供“错因+正确句子”。
+- 题干简洁，贴六年级生活语境（上学、课余、家庭、校园活动）。
+- 解析要让“做错的孩子也能看懂”，避免术语堆砌，强调“如何快速判断”。`;
+}
+function buildUserPrompt({count, types, level, focus, mode}){
+  return `请生成 ${count} 道题。题型：${types.join(', ')}；难度：${level}；知识点优先：${focus || '无特别指定'}；模式：${mode}。\n严格只返回 JSON。`;
+}
+
+async function callLLM(batchCount, params, signal){
+  const { OPENAI_API_KEY, OPENAI_BASE_URL, OPENAI_MODEL } = process.env;
+  const url = `${OPENAI_BASE_URL.replace(/\/+$/,'')}/chat/completions`;
+  const system = buildSystemPrompt({ ...params, count: batchCount });
+  const user   = buildUserPrompt({ ...params, count: batchCount });
+  const body = {
+    model: OPENAI_MODEL || 'gpt-4o-mini',
+    temperature: 0.55,
+    messages: [
+      { role: 'system', content: system },
+      { role: 'user', content: user }
+    ]
+  };
+  const resp = await fetch(url, {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${OPENAI_API_KEY}`, 'Content-Type':'application/json' },
+    body: JSON.stringify(body),
+    signal
+  });
+  if (!resp.ok){
+    const t = await resp.text().catch(()=>'');
+    throw new Error(`Upstream ${resp.status}: ${t.slice(0,1200)}`);
+  }
+  const data = await resp.json();
+  const content = data?.choices?.[0]?.message?.content?.trim() || '';
+  let json;
+  try{ json = JSON.parse(content); }
+  catch(e){
+    const m = content.match(/```json\s*([\s\S]*?)```/i);
+    if (m){ json = JSON.parse(m[1]); }
+    else { throw new Error('模型未返回合法 JSON'); }
+  }
+  if (!json || !Array.isArray(json.items)) throw new Error('返回 JSON 缺少 items 数组');
+  return json.items.map(toV9);
+}
+
+async function mapLimit(arr, limit, iteratee){
+  const ret=[]; const pool=[];
+  for (const it of arr){
+    const p = Promise.resolve().then(()=>iteratee(it));
+    ret.push(p);
+    const done = p.finally(()=> pool.splice(pool.indexOf(done),1));
+    pool.push(done);
+    if (pool.length >= limit) await Promise.race(pool);
   }
   return Promise.all(ret);
 }
 
-function buildSubtypeHint(subtype){
-  // Detailed instructions tailored for primary school
-  switch (subtype) {
-    case "short-correct":
-      return `题型：改错题
-- 每题给出一个包含常见小错误的句子（单三 s、时态、大小写、可数名词复数、介词、冠词等），难度为小学六年级。
-- 学生需要写出“改正后的完整句子”或“正确词形”。
-- 题干示例：Fix the mistake: "He go to school every day." 或 “Choose the correct form for the underline word…”
-- 正确答案(answer_text) 务必是“改正后的完整句子”或“正确词”，尽量简短、明确。`;
-    case "short-transform":
-      return `题型：句型转换
-- 每题给出一句话，并要求做一种简单转换：肯定↔否定、一般疑问句↔陈述句、一般现在时第三人称变形、一般过去时/将来时、同义改写（同等难度），符合小学六年级。
-- 题干示例：Change into a negative sentence: "She likes apples."；Make a question: "Tom is reading."；Rewrite using "because"...
-- 正确答案(answer_text) 给出“转换后”的目标句，简短、自然。`;
-    case "short-reorder":
-      return `题型：连词成句
-- 给出 4–8 个打乱顺序的词或短语，学生需排成通顺句。
-- 只使用常见词汇与简单时态，避免超纲；注意首字母大写与句末标点。
-- 题干示例：Reorder the words to make a sentence: "to / goes / school / every day / he".
-- 正确答案(answer_text) 是“还原后的完整句子”。`;
-    default:
-      return ``;
-  }
-}
-
-async function callUpstream({ BASE, KEY, MODEL, questionType, form, subtype, count }) {
-  const url = `${BASE.replace(/\/+$/, "")}/chat/completions`;
-
-  const topicHint =
-    questionType === "tenses"
-      ? "侧重英语时态（一般现在/过去/进行/将来等），避免超纲；解析语气温和、鼓励孩子。"
-      : "侧重小学常见语法（主谓一致、代词、介词、比较级入门、冠词等），避免超纲；解析语气温和、鼓励孩子。";
-
-  const formHint =
-    form === "mcq"
-      ? "全部出选择题（四选一）。"
-      : form === "short"
-      ? "全部出简答/填空题（短答案，不超过一行）。"
-      : "选择题与简答混合（比例约 1:1）。";
-
-  const subtypeHint = buildSubtypeHint(subtype || "");
-
-  const schema = `输出严格 JSON 数组（不要 markdown 代码块）。数组长度为 ${count}。每个元素：
-{
-  "question_type": "mcq|short",
-  "question": "Question text in ENGLISH only. Use (   ) for blanks. No Chinese translation or Chinese hints in question.",
-  "options": ["A) ...","B) ...","C) ...","D) ..."], // 仅当 question_type=mcq 时需要；short 时给 []
-  "answer_letter": "A|B|C|D",                        // mcq 时需要
-  "answer_text": "正确答案文本（short 的答案；mcq 也请给出对应选项文本）",
-  "answer_explanation": "参考答案：A 或 正确答案：xxx\\n分步讲解：1) ... 2) ... 3) ...\\n提示：给六年级学生的小提醒"
-}`;
-
-  const systemPrompt = `你是一名小学英语教研员，熟悉“译林版”六年级下/上册语法要求。请根据参数生成题库，并严格输出 JSON（不要多余文字）。
-${topicHint}
-${formHint}
-${subtypeHint}
-${schema}
-要求：生成适合六年级学生的题目，覆盖：时态（一般现在/过去/进行）、主谓一致、代词（物主/反身）、形容词/副词比较级与最高级、句型转换、连词成句、短文语法选择。讲解要口语化、分步骤、举例子，解释为什么错。
-- 题干简洁、面向学生的操作提示用中文，例如“把下列句子改为否定句/一般疑问句/选择正确形式”；英语例句本身保持英文；
-- 简答题的答案尽量短（1~6个词或一句常见短句），避免歧义；
-- 选项严格 4 个，且显式带字母 A) B) C) D)；
-- 分步讲解：\n1) 先看时间状语…\n2) 主语是三单…\n3) 规则/不规则变化…\n举例：This/That…。`;
-
-  const messages = [
-    { role: "system", content: systemPrompt },
-    { role: "user", content: "请生成题目。" },
-  ];
-
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 9000);
-
-  try {
-    const resp = await fetch(url, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: MODEL,
-        temperature: 0.5,
-        max_tokens: 1400,
-        messages,
-      }),
-      signal: controller.signal,
-    });
-
-    if (!resp.ok) {
-      const text = await resp.text();
-      return { ok: false, status: resp.status, detail: text.slice(0,2000) };
-    }
-
-    const data = await resp.json();
-    const raw = data?.choices?.[0]?.message?.content ?? "[]";
-    const cleaned = raw.replace(/```json|```/g, "").trim();
-
-    let arr;
-    try {
-      arr = JSON.parse(cleaned);
-      if (!Array.isArray(arr)) throw new Error("not array");
-    } catch (e) {
-      return { ok: false, status: 502, detail: "invalid JSON from model", raw };
-    }
-
-    arr = arr.map((it) => {
-      const qt = String(it.question_type || "").toLowerCase() === "short" ? "short" : "mcq";
-      const q = String(it.question || "").slice(0, 500);
-      const options = Array.isArray(it.options) ? it.options.slice(0,4).map(s=>String(s||"").slice(0,200)) : [];
-      let answer_letter = String(it.answer_letter || "").replace(/[^ABCD]/g, "") || "";
-      let answer_text = String(it.answer_text || "").slice(0, 300);
-      if (qt === "mcq") {
-        if (!answer_letter) answer_letter = "A";
-        if (!answer_text && options.length) {
-          const idx = {A:0,B:1,C:2,D:3}[answer_letter] ?? 0;
-          answer_text = options[idx] || "";
-        }
-      } else {
-        answer_letter = "";
-        if (!answer_text) answer_text = "";
-      }
-      return {
-        question_type: qt,
-        question: q,
-        options,
-        answer_letter,
-        answer_text,
-        answer_explanation: String(it.answer_explanation || "").slice(0, 1200),
-      };
-    });
-
-    while (arr.length < count) arr.push(arr[arr.length-1] || {
-      question_type: "mcq",
-      question: "",
-      options: ["A) ","B) ","C) ","D) "],
-      answer_letter: "A",
-      answer_text: "",
-      answer_explanation: ""
-    });
-    return { ok: true, data: arr.slice(0, count) };
-  } catch (err) {
-    return { ok: false, status: 504, detail: "fetch aborted or network error: " + (err && err.message) };
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
 exports.handler = async (event) => {
-  try {
-    if (event.httpMethod !== "POST") {
-      return { statusCode: 405, body: "Method Not Allowed" };
+  try{
+    if (event.httpMethod !== 'POST') return { statusCode: 405, body: 'Use POST' };
+
+    const { OPENAI_API_KEY, OPENAI_BASE_URL } = process.env;
+    if (!OPENAI_API_KEY || !OPENAI_BASE_URL){
+      return { statusCode: 500, body: JSON.stringify({ error: 'Missing OPENAI_API_KEY or OPENAI_BASE_URL' }) };
     }
 
-    const body = JSON.parse(event.body || "{}");
-    const questionType = body.questionType || "grammar"; // grammar | tenses
-    const total = Math.min(Math.max(parseInt(body.questionCount || 10, 10), 1), 40);
-    const form = body.form || "mixed"; // mcq | short | mixed
-    const subtype = body.subtype || ""; // short-correct | short-transform | short-reorder
+    let payload = {};
+    try{ payload = JSON.parse(event.body || '{}'); }
+    catch{ return { statusCode: 400, body: JSON.stringify({ error: 'Invalid JSON' }) }; }
 
-    const BASE = process.env.OPENAI_BASE_URL;
-    const KEY = process.env.OPENAI_API_KEY;
-    const MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
+    // Map from V9 UI fields -> tutor params
+    const total = Math.max(1, Math.min(40, Number(payload.questionCount)||10));
+    const mode = (payload.questionType === 'tenses') ? 'tense' : 'grammar';
+    const form = String(payload.form || 'mixed'); // mcq | short | mixed
+    const subtype = String(payload.subtype || '');
 
-    if (!BASE || !KEY) {
-      return {
-        statusCode: 500,
-        body: JSON.stringify({ error: "Server not configured: missing OPENAI_BASE_URL or OPENAI_API_KEY" }),
-      };
+    // Translate to tutor types
+    let types = [];
+    if (form === 'mcq') types = ['choice'];
+    else if (form === 'short'){
+      if (subtype === 'short-correct') types = ['error'];
+      else if (subtype === 'short-transform') types = ['transform'];
+      else if (subtype === 'short-reorder') types = ['rearrange'];
+      else types = ['fill'];
+    }else{
+      types = ['choice','error','transform','fill','rearrange','reading'];
     }
 
-    const batchSize = 5;
-    const batches = Math.ceil(total / batchSize);
-    const tasks = Array.from({ length: batches }, (_, i) => {
-      const count = i === batches - 1 ? total - i * batchSize : batchSize;
-      return { count };
-    });
+    const level = ['easy','normal','hard'].includes(payload.level) ? payload.level : 'normal';
+    const focus = String(payload.focus || '');
+
+    // batching
+    const batches = []; let rest = total;
+    while(rest>0){ const c = Math.min(BATCH, rest); batches.push(c); rest -= c; }
+
+    const controller = new AbortController();
+    const timer = setTimeout(()=>controller.abort(), Math.max(25000, TIMEOUT_MS + 3000));
 
     let results = [];
-    const firstPass = await mapLimit(tasks, 2, async (t) =>
-      callUpstream({ BASE, KEY, MODEL, questionType, form, subtype, count: t.count })
-    );
-
-    const failed = [];
-    firstPass.forEach((res, idx) => {
-      if (res.ok) results = results.concat(res.data);
-      else failed.push({ idx, need: tasks[idx].count, res });
+    const params = { count:0, types, level, focus, mode };
+    const parts = await mapLimit(batches, PARALLEL, async (c)=>{
+      return await callLLM(c, params, controller.signal);
     });
-
-    if (failed.length) {
-      const retryTasks = failed.map((f) => ({ count: Math.min(3, f.need) }));
-      const secondPass = await mapLimit(retryTasks, 1, async (t) =>
-        callUpstream({ BASE, KEY, MODEL, questionType, form, subtype, count: t.count })
-      );
-      secondPass.forEach((res) => {
-        if (res.ok) results = results.concat(res.data);
-      });
-    }
+    parts.forEach(x=> results = results.concat(x));
+    clearTimeout(timer);
 
     results = results.slice(0, total);
-    if (!results.length) {
-      return { statusCode: 504, body: JSON.stringify({ error: "Upstream timeout or invalid response." }) };
-    }
+    if (!results.length) return { statusCode: 504, body: JSON.stringify({ error: 'Empty result' }) };
 
-    return { statusCode: 200, headers: { "Content-Type": "application/json" }, body: JSON.stringify(results) };
-  } catch (err) {
-    return { statusCode: 500, body: JSON.stringify({ error: err.message || String(err) }) };
+    return {
+      statusCode: 200,
+      headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
+      body: JSON.stringify(results)
+    };
+  }catch(err){
+    const m = (err && (err.message || String(err))).slice(0,1200);
+    return { statusCode: 500, body: JSON.stringify({ error: m }) };
   }
 };
