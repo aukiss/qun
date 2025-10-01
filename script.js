@@ -152,7 +152,7 @@ function renderQuestions(questions, opts={}){
 
     const qText = document.createElement('div');
     qText.className = 'qtext';
-    qText.innerHTML = `${q.question ?? ''}`;
+    qText.innerHTML = `${(q.question ?? '').replace(/(?:参考答案|答案)[:：].*/g,'')}`;
 
     card.appendChild(meta);
     card.appendChild(qText);
@@ -195,6 +195,7 @@ function renderQuestions(questions, opts={}){
 
     const ans = document.createElement('div');
     ans.className = 'answer';
+    ans.style.display='none';
     const slim = slimExplanation(q.answer_letter ?? '', q.answer_text ?? '', q.answer_explanation ?? '');
     ans.innerHTML = `<pre>${slim}</pre>`;
 
